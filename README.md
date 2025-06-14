@@ -9,6 +9,49 @@ It provides a simple component `CameraBox` which can be used to configure the be
 ## Features
 - Provides a decent API for letterboxing/pillarboxing.
 
+## Examples
+### Integer Scaling
+```rust
+// Note, you will need to spawn the image.
+fn main() {
+    App::new()
+        .add_plugins(
+            DefaultPlugins
+                .set(WindowPlugin {
+                    primary_window: Some(Window {
+                        title: "Integer Scaling".into(),
+                        name: Some("Integer Scaling".into()),
+                        resolution: WindowResolution::new(1280., 720.),
+                    }),
+                    ..default()
+                })
+                .set(ImagePlugin::default_nearest()),
+        )
+        .add_plugins(CameraBoxPlugin)
+        .add_systems(Startup, setup);
+}
+
+fn setup(mut commands: Command) {
+    let projection = OrthographicProjection::default_2d();
+    projection.scaling_mode = ScalingMode::Fixed {
+        width: 640.,
+        height: 360.,
+    };
+    commands.spawn((
+        Camera2d::default(),
+        Camera {
+            clear_color: ClearColorConfig::Custom(Color::linear_rgb(0.5, 0.5, 0.9)),
+            ..default()
+        },
+        CameraBox::ResolutionIntegerScale {
+            resolution: Vec2::new(640., 360.),
+            allow_imperfect_aspect_ratios: false,
+        },
+        Projection::Orthographic(projection)
+    ));
+}
+```
+
 ## Known Limitations
 - If you use multiple cameras, only one clear color can be displayed at once, even if they have different viewports.
 
