@@ -2,14 +2,20 @@
 name = "bevy_simple_screen_boxing"
 version = "0.1.0"
 edition = "2024"
+categories = ["game-development"]
+keywords = ["bevy", "letterbox", "camera"]
+license = "MIT OR Apacahe-2.0"
+description = "A simple, but small, crate that aims to make Letter/Pillar Boxing in Bevy easy."
+repository = "https://github.com/Sapein/bevy_simple_screen_boxing"
+readme = "README.md"
 
 [dependencies]
-bevy_app = "0.16"
-bevy_asset = "0.16"
-bevy_math = "0.16"
-bevy_reflect = "0.16"
-bevy_ecs = "0.16"
-bevy_image = "0.16"
-bevy_render = "0.16"
-bevy_utils = "0.16"
-bevy_window = "0.16"
+bevy_app = { version ="0.16", default-features = false }
+bevy_asset = { version ="0.16", default-features = false }
+bevy_math = { version = "0.16" , default-features = false, features = ["libm", "bevy_reflect"]}
+bevy_reflect = { version ="0.16", default-features = false }
+bevy_ecs = { version ="0.16", default-features = false }
+bevy_image = { version ="0.16", default-features = false }
+bevy_render = { version ="0.16", default-features = false }
+bevy_utils = { version = "0.16", default-features = false }
+bevy_window = { version = "0.16", default-features = false }
