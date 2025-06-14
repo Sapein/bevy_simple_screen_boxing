@@ -1,47 +1,97 @@
 use bevy::math::AspectRatio;
 use bevy::prelude::*;
-use bevy::render::camera::{ManualTextureView, ManualTextureViews, NormalizedRenderTarget, RenderTarget, Viewport, ScalingMode};
-use bevy::render::render_resource::{
-    Extent3d, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages,
-};
-use bevy::window::{PrimaryWindow, WindowRef};
+use bevy::render::camera::{ManualTextureViews, Viewport};
+use bevy::window::{PrimaryWindow};
 
 pub struct LetterboxPlugin;
 impl Plugin for LetterboxPlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<CameraBox>()
-            .add_systems(Update, adjust_viewport);
+            .add_event::<AdjustBoxing>()
+            .add_systems(First, (windows_changed, camerabox_changed))
+            .add_systems(First, images_changed.run_if(on_event::<AssetEvent::<Image>>))
+            .add_systems(First, texture_views_changed.run_if(resource_changed_or_removed::<ManualTextureViews>))
+            .add_systems(First, adjust_viewport.run_if(on_event::<AdjustBoxing>).after(camerabox_changed).after(windows_changed).after(images_changed).after(texture_views_changed));
     }
 }
 
 #[derive(Component, Reflect)]
 #[reflect(Component)]
-pub struct CameraBox {
-    pub mode: CameraBoxMode, // Rename?
-}
-
-#[derive(Reflect)]
-enum CameraBoxMode {
+/// Configures how to box the output, with either: PillarBoxes, Letterboxes, or both.
+enum CameraBox {
+    /// Keep the output at a static resolution, and box if it exceeds the resolution.
     StaticResolution {
         resolution: UVec2,
+        
+        /// Where to put the Boxed output, if this is None then it will be centered.
         position: Option<UVec2>,
     },
+    
+    /// Keep the output as a static Aspect Ratio. If the output is not at the Aspect Ratio
+    /// apply boxing to force it into the correct Aspect Ratio.
     StaticAspectRatio {
         aspect_ratio: AspectRatio,
+        
+        /// Where to put the Boxed output, if this is None then it will be centered.
         position: Option<UVec2>,
     },
+    
+    /// Keep the output at an Integer Scale of a specific Resolution, if no Integer Scale exists
+    /// box the output to an Integer Scale.
     ResolutionIntegerScale {
-        allow_imperfect_aspect_ratios: bool,
         resolution: Vec2,
+        
+        /// If this is true, then the output may not be *exactly* the proper Aspect Ratio (being off
+        /// by at most ~0.0001), especially when scaling down. If this is false, then we will do
+        /// whatever we can to maintain the Aspect Ratio, no matter what. Although it might still be
+        /// off but a small amount (about ~0.00001)
+        allow_imperfect_aspect_ratios: bool,
     },
+    
+    /// Have static letterboxing with specific sizes for each of the bars.
     LetterBox {
+        /// The bar at the top of the output.
         top: u32,
+        
+        /// The bar at the bottom of the output.
         bottom: u32,
+        
+        /// Whether we can attempt to scale the letterboxing if the output is smaller than
+        /// the desired sizing. If we can't, it will disable letterboxing when it can not accomodate
+        /// the sizes requested.
         strict_letterboxing: bool,
     },
+    
+    /// Have static Pillarboxing with specific sizes for each of the bars.
     PillarBox {
+        /// The bar on the left side of the output.
         left: u32,
+        
+        /// The bar on the right side of the output.
         right: u32,
+    }
+}
+
+#[derive(Event)]
+struct AdjustBoxing;
+
+fn windows_changed(mut boxing_event: EventWriter<AdjustBoxing>, window: Query<&Window, Changed<Window>>) {
+    if !window.is_empty() {
+        boxing_event.write(AdjustBoxing);
+    }
+}
+
+fn images_changed(mut boxing_event: EventWriter<AdjustBoxing>) {
+    boxing_event.write(AdjustBoxing);
+}
+
+fn texture_views_changed(mut boxing_event: EventWriter<AdjustBoxing>) {
+    boxing_event.write(AdjustBoxing);
+}
+
+fn camerabox_changed(mut boxing_event: EventWriter<AdjustBoxing>, boxes: Query<&CameraBox, Or<(Changed<CameraBox>, Changed<Camera>)>>) {
+    if !boxes.is_empty() {
+        boxing_event.write(AdjustBoxing);
     }
 }
 
@@ -67,8 +117,8 @@ fn adjust_viewport(
             Some(target) => target
         };
 
-        match &camera_box.mode {
-            CameraBoxMode::StaticResolution { resolution: size, position, } => match &mut camera.viewport {
+        match &camera_box {
+            CameraBox::StaticResolution { resolution: size, position, } => match &mut camera.viewport {
                 Some(viewport) => {
                     if &viewport.physical_size != size {
                         if size.x > viewport.physical_size.x || size.y > viewport.physical_size.y {
@@ -104,7 +154,7 @@ fn adjust_viewport(
                     })
                 }
             },
-            CameraBoxMode::StaticAspectRatio { aspect_ratio, position } => match &mut camera.viewport {
+            CameraBox::StaticAspectRatio { aspect_ratio, position } => match &mut camera.viewport {
                 None => {
                     let physical_aspect_ratio = match AspectRatio::try_from(target.physical_size.as_vec2()) {
                         Ok(ar) => ar,
@@ -141,7 +191,7 @@ fn adjust_viewport(
                     }
                 }
             },
-            CameraBoxMode::ResolutionIntegerScale { allow_imperfect_aspect_ratios, resolution }=> {
+            CameraBox::ResolutionIntegerScale { allow_imperfect_aspect_ratios, resolution }=> {
                 let (boxing, sizing) =  if *allow_imperfect_aspect_ratios {
                     match calculate_sizes_imperfect(&target.physical_size.as_vec2(), resolution) {
                         Ok(opt) => match opt {
@@ -172,7 +222,7 @@ fn adjust_viewport(
                     ..default()
                 });
             },
-            CameraBoxMode::LetterBox { top, bottom, strict_letterboxing } => match &mut camera.viewport {
+            CameraBox::LetterBox { top, bottom, strict_letterboxing } => match &mut camera.viewport {
                 None => {
                     let (mut boxing, mut sizing) = calculate_aspect_ratio_from_letterbox(&target.physical_size.as_vec2(), (top, bottom)).unwrap();
                     if (sizing.y + boxing.y > target.physical_size.y as f32 || sizing.y <= 0.) && !strict_letterboxing{
@@ -214,7 +264,7 @@ fn adjust_viewport(
                     viewport.physical_size = sizing.as_uvec2();
                 }
             },
-            CameraBoxMode::PillarBox { left, right } => match &mut camera.viewport {
+            CameraBox::PillarBox { left, right } => match &mut camera.viewport {
                 None => {
                     let (mut boxing, mut sizing) = calculate_aspect_ratio_from_pillarbox(&target.physical_size.as_vec2(), (left, right)).unwrap();
 
