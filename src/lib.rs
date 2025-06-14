@@ -29,7 +29,7 @@ impl Plugin for LetterboxPlugin {
 #[derive(Component, Reflect)]
 #[reflect(Component)]
 /// Configures how to box the output, with either: PillarBoxes, Letterboxes, or both.
-enum CameraBox {
+pub enum CameraBox {
     /// Keep the output at a static resolution, and box if it exceeds the resolution.
     StaticResolution {
         resolution: UVec2,
@@ -143,7 +143,7 @@ fn adjust_viewport(
                 Some(viewport) => {
                     if &viewport.physical_size != size {
                         if size.x > viewport.physical_size.x || size.y > viewport.physical_size.y {
-                            viewport.physical_size = *size;
+                            viewport.physical_size = size.clone();
                             if target.physical_size.x < size.x {
                                 viewport.physical_size.x = target.physical_size.x;
                             }
