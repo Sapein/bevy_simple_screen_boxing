@@ -143,7 +143,7 @@ fn adjust_viewport(
                 Some(viewport) => {
                     if &viewport.physical_size != size {
                         if size.x > viewport.physical_size.x || size.y > viewport.physical_size.y {
-                            viewport.physical_size = size.clone();
+                            viewport.physical_size = *size;
                             if target.physical_size.x < size.x {
                                 viewport.physical_size.x = target.physical_size.x;
                             }
@@ -151,11 +151,11 @@ fn adjust_viewport(
                                 viewport.physical_size.y = target.physical_size.y;
                             }
                         } else {
-                            viewport.clamp_to_size(size.clone());
+                            viewport.clamp_to_size(*size);
                         }
                     }
                     if position.is_some_and(|u| u != viewport.physical_position) {
-                        viewport.physical_position = position.unwrap().clone();
+                        viewport.physical_position = position.unwrap();
                     } else if position.is_none() {
                         viewport.physical_position =
                             (target.physical_size - viewport.physical_size) / 2;
@@ -163,13 +163,12 @@ fn adjust_viewport(
                 }
                 None => {
                     camera.viewport = Some(Viewport {
-                        physical_size: size.clone(),
+                        physical_size: *size,
                         physical_position: if position.is_some() {
                             position.unwrap()
                         } else {
                             Default::default()
                         },
-                        depth: Default::default(),
                         ..default()
                     })
                 }
@@ -440,8 +439,8 @@ fn calculate_sizes_imperfect(
         desired_size.y * best_scale
     };
 
-    let letterbox_size = physical_size.y as f32 - render_height;
-    let pillarbox_size = physical_size.x as f32 - render_width;
+    let letterbox_size = physical_size.y - render_height;
+    let pillarbox_size = physical_size.x - render_width;
 
     Ok(Some((
         Vec2::new(pillarbox_size / 2., letterbox_size / 2.),
