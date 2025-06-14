@@ -1,26 +1,26 @@
 //! `bevy_simple_screen_boxing` aims to provide a simple, easy, and convenient way to set and manage
-//! camera boxing (that is, letterboxing and pillarboxing) in order to ensure that the output is 
-//! within the right resolution or aspect ratio. 
-//! 
+//! camera boxing (that is, letterboxing and pillarboxing) in order to ensure that the output is
+//! within the right resolution or aspect ratio.
+//!
 //! It provides ways to set a singular static resolution or aspect ratio, to always ensure the output
 //! is at a resolution that is an integer scale, or provide manually specified letter/pillarboxing.
-//! 
+//!
 //! This crate requires bevy version `0.16`
 //!
 //! ## Features
 //! - Provides an easy, but powerful, API for camera boxing!
-//! 
+//!
 //! ## Quick Start
 //! - Add the `CameraBoxingPlugin`
 //! - Add the `CameraBox` component to your Camera, and configure what you need.
 use bevy_app::{App, First, Plugin};
 use bevy_asset::{AssetEvent, Assets};
-use bevy_math::{AspectRatio, UVec2, Vec2};
-use bevy_reflect::Reflect;
 use bevy_ecs::prelude::*;
 use bevy_image::Image;
-use bevy_render::prelude::*;
+use bevy_math::{AspectRatio, UVec2, Vec2};
+use bevy_reflect::Reflect;
 use bevy_render::camera::{ManualTextureViews, Viewport};
+use bevy_render::prelude::*;
 use bevy_utils::default;
 use bevy_window::{PrimaryWindow, Window};
 
@@ -166,7 +166,7 @@ fn adjust_viewport(
                 Some(viewport) => {
                     if &viewport.physical_size != size {
                         if size.x > viewport.physical_size.x || size.y > viewport.physical_size.y {
-                            viewport.physical_size = size.clone();
+                            viewport.physical_size = *size;
                             if target.physical_size.x < size.x {
                                 viewport.physical_size.x = target.physical_size.x;
                             }
@@ -180,7 +180,9 @@ fn adjust_viewport(
                     if position.is_some_and(|u| u != viewport.physical_position) {
                         viewport.physical_position = position.unwrap();
                     } else if position.is_none() {
-                        viewport.physical_position = if (size.x < target.physical_size.x) && (size.y < target.physical_size.y) {
+                        viewport.physical_position = if (size.x < target.physical_size.x)
+                            && (size.y < target.physical_size.y)
+                        {
                             (target.physical_size - viewport.physical_size) / 2
                         } else {
                             UVec2::ZERO
@@ -189,7 +191,9 @@ fn adjust_viewport(
                 }
                 None => {
                     camera.viewport = Some(Viewport {
-                        physical_size: if (target.physical_size.x < size.x) || (target.physical_size.y < size.y) {
+                        physical_size: if (target.physical_size.x < size.x)
+                            || (target.physical_size.y < size.y)
+                        {
                             *size
                         } else {
                             target.physical_size
@@ -197,7 +201,9 @@ fn adjust_viewport(
                         physical_position: match position {
                             Some(pos) => *pos,
                             None => {
-                                if (size.x < target.physical_size.x) && (size.y < target.physical_size.y) {
+                                if (size.x < target.physical_size.x)
+                                    && (size.y < target.physical_size.y)
+                                {
                                     (target.physical_size - size) / 2
                                 } else {
                                     UVec2::ZERO
