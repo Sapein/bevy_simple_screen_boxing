@@ -30,7 +30,8 @@ impl Plugin for LetterboxPlugin {
 #[reflect(Component)]
 /// Configures how to box the output, with either: PillarBoxes, Letterboxes, or both.
 pub enum CameraBox {
-    /// Keep the output at a static resolution, and box if it exceeds the resolution.
+    /// Keep the output at a static resolution, if possible, and box if it exceeds the resolution.
+    /// If the output is smaller than the resolution, it will output at the smaller resolution instead.
     StaticResolution {
         resolution: UVec2,
 
@@ -157,17 +158,29 @@ fn adjust_viewport(
                     if position.is_some_and(|u| u != viewport.physical_position) {
                         viewport.physical_position = position.unwrap();
                     } else if position.is_none() {
-                        viewport.physical_position =
-                            (target.physical_size - viewport.physical_size) / 2;
+                        viewport.physical_position = if (target.physical_size.x < viewport.physical_size.x) || (target.physical_size.y < viewport.physical_size.y) {
+                            (target.physical_size - viewport.physical_size) / 2
+                        } else {
+                            UVec2::ZERO
+                        }
                     }
                 }
                 None => {
                     camera.viewport = Some(Viewport {
-                        physical_size: *size,
-                        physical_position: if position.is_some() {
-                            position.unwrap()
+                        physical_size: if (target.physical_size.x < size.x) || (target.physical_size.y < size.y) {
+                            *size
                         } else {
-                            Default::default()
+                            target.physical_size
+                        },
+                        physical_position: match position {
+                            Some(pos) => *pos,
+                            None => {
+                                if (target.physical_size.x < size.x) || (target.physical_size.y < size.y) {
+                                    (target.physical_size - size) / 2
+                                } else {
+                                    UVec2::ZERO
+                                }
+                            }
                         },
                         ..default()
                     })
