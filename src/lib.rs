@@ -1,7 +1,7 @@
 use bevy::math::AspectRatio;
 use bevy::prelude::*;
 use bevy::render::camera::{ManualTextureViews, Viewport};
-use bevy::window::{PrimaryWindow};
+use bevy::window::PrimaryWindow;
 
 pub struct LetterboxPlugin;
 impl Plugin for LetterboxPlugin {
@@ -9,9 +9,20 @@ impl Plugin for LetterboxPlugin {
         app.register_type::<CameraBox>()
             .add_event::<AdjustBoxing>()
             .add_systems(First, (windows_changed, camerabox_changed))
-            .add_systems(First, images_changed.run_if(on_event::<AssetEvent::<Image>>))
-            .add_systems(First, texture_views_changed.run_if(resource_changed_or_removed::<ManualTextureViews>))
-            .add_systems(First, adjust_viewport.run_if(on_event::<AdjustBoxing>).after(camerabox_changed).after(windows_changed).after(images_changed).after(texture_views_changed));
+            .add_systems(First, images_changed.run_if(on_event::<AssetEvent<Image>>))
+            .add_systems(
+                First,
+                texture_views_changed.run_if(resource_changed_or_removed::<ManualTextureViews>),
+            )
+            .add_systems(
+                First,
+                adjust_viewport
+                    .run_if(on_event::<AdjustBoxing>)
+                    .after(camerabox_changed)
+                    .after(windows_changed)
+                    .after(images_changed)
+                    .after(texture_views_changed),
+            );
     }
 }
 
@@ -22,60 +33,63 @@ enum CameraBox {
     /// Keep the output at a static resolution, and box if it exceeds the resolution.
     StaticResolution {
         resolution: UVec2,
-        
+
         /// Where to put the Boxed output, if this is None then it will be centered.
         position: Option<UVec2>,
     },
-    
+
     /// Keep the output as a static Aspect Ratio. If the output is not at the Aspect Ratio
     /// apply boxing to force it into the correct Aspect Ratio.
     StaticAspectRatio {
         aspect_ratio: AspectRatio,
-        
+
         /// Where to put the Boxed output, if this is None then it will be centered.
         position: Option<UVec2>,
     },
-    
+
     /// Keep the output at an Integer Scale of a specific Resolution, if no Integer Scale exists
     /// box the output to an Integer Scale.
     ResolutionIntegerScale {
         resolution: Vec2,
-        
+
         /// If this is true, then the output may not be *exactly* the proper Aspect Ratio (being off
         /// by at most ~0.0001), especially when scaling down. If this is false, then we will do
         /// whatever we can to maintain the Aspect Ratio, no matter what. Although it might still be
         /// off but a small amount (about ~0.00001)
         allow_imperfect_aspect_ratios: bool,
     },
-    
+
     /// Have static letterboxing with specific sizes for each of the bars.
     LetterBox {
         /// The bar at the top of the output.
         top: u32,
-        
+
         /// The bar at the bottom of the output.
         bottom: u32,
-        
+
         /// Whether we can attempt to scale the letterboxing if the output is smaller than
         /// the desired sizing. If we can't, it will disable letterboxing when it can not accomodate
         /// the sizes requested.
         strict_letterboxing: bool,
     },
-    
+
     /// Have static Pillarboxing with specific sizes for each of the bars.
     PillarBox {
         /// The bar on the left side of the output.
         left: u32,
-        
+
         /// The bar on the right side of the output.
         right: u32,
-    }
+    },
 }
 
 #[derive(Event)]
 struct AdjustBoxing;
 
-fn windows_changed(mut boxing_event: EventWriter<AdjustBoxing>, window: Query<&Window, Changed<Window>>) {
+fn windows_changed(
+    mut boxing_event: EventWriter<AdjustBoxing>,
+    window: Query<&Window, Changed<Window>>,
+) {
     if !window.is_empty() {
         boxing_event.write(AdjustBoxing);
     }
@@ -89,7 +103,10 @@ fn texture_views_changed(mut boxing_event: EventWriter<AdjustBoxing>) {
     boxing_event.write(AdjustBoxing);
 }
 
-fn camerabox_changed(mut boxing_event: EventWriter<AdjustBoxing>, boxes: Query<&CameraBox, Or<(Changed<CameraBox>, Changed<Camera>)>>) {
+fn camerabox_changed(
+    mut boxing_event: EventWriter<AdjustBoxing>,
+    boxes: Query<&CameraBox, Or<(Changed<CameraBox>, Changed<Camera>)>>,
+) {
     if !boxes.is_empty() {
         boxing_event.write(AdjustBoxing);
     }
@@ -112,13 +129,17 @@ fn adjust_viewport(
                 .to_owned(),
         ); // Probably a better way to do this.
 
-        let target = match target.and_then(|t| t.get_render_target_info(windows, &images, &texture_views)) {
-            None => continue,
-            Some(target) => target
-        };
+        let target =
+            match target.and_then(|t| t.get_render_target_info(windows, &images, &texture_views)) {
+                None => continue,
+                Some(target) => target,
+            };
 
         match &camera_box {
-            CameraBox::StaticResolution { resolution: size, position, } => match &mut camera.viewport {
+            CameraBox::StaticResolution {
+                resolution: size,
+                position,
+            } => match &mut camera.viewport {
                 Some(viewport) => {
                     if &viewport.physical_size != size {
                         if size.x > viewport.physical_size.x || size.y > viewport.physical_size.y {
@@ -133,12 +154,11 @@ fn adjust_viewport(
                             viewport.clamp_to_size(size.clone());
                         }
                     }
-                    if position
-                        .is_some_and(|u| u != viewport.physical_position)
-                    {
+                    if position.is_some_and(|u| u != viewport.physical_position) {
                         viewport.physical_position = position.unwrap().clone();
                     } else if position.is_none() {
-                        viewport.physical_position = (target.physical_size - viewport.physical_size) / 2;
+                        viewport.physical_position =
+                            (target.physical_size - viewport.physical_size) / 2;
                     }
                 }
                 None => {
@@ -154,17 +174,23 @@ fn adjust_viewport(
                     })
                 }
             },
-            CameraBox::StaticAspectRatio { aspect_ratio, position } => match &mut camera.viewport {
+            CameraBox::StaticAspectRatio {
+                aspect_ratio,
+                position,
+            } => match &mut camera.viewport {
                 None => {
-                    let physical_aspect_ratio = match AspectRatio::try_from(target.physical_size.as_vec2()) {
-                        Ok(ar) => ar,
-                        Err(_) => continue,
-                    };
+                    let physical_aspect_ratio =
+                        match AspectRatio::try_from(target.physical_size.as_vec2()) {
+                            Ok(ar) => ar,
+                            Err(_) => continue,
+                        };
                     if physical_aspect_ratio.ratio() == aspect_ratio.ratio() {
                         camera.viewport = None;
                         continue;
                     }
-                    let (boxing, sizing) = calculate_sizes_resolution(&target.physical_size.as_vec2(), aspect_ratio).unwrap();
+                    let (boxing, sizing) =
+                        calculate_sizes_resolution(&target.physical_size.as_vec2(), aspect_ratio)
+                            .unwrap();
                     camera.viewport = Some(Viewport {
                         physical_position: boxing.as_uvec2(),
                         physical_size: match position {
@@ -175,15 +201,18 @@ fn adjust_viewport(
                     });
                 }
                 Some(viewport) => {
-                    let physical_aspect_ratio = match AspectRatio::try_from(target.physical_size.as_vec2()) {
-                        Ok(ar) => ar,
-                        Err(_) => continue,
-                    };
+                    let physical_aspect_ratio =
+                        match AspectRatio::try_from(target.physical_size.as_vec2()) {
+                            Ok(ar) => ar,
+                            Err(_) => continue,
+                        };
                     if physical_aspect_ratio.ratio() == aspect_ratio.ratio() {
                         camera.viewport = None;
                         continue;
                     }
-                    let (boxing, sizing) = calculate_sizes_resolution(&target.physical_size.as_vec2(), aspect_ratio).unwrap();
+                    let (boxing, sizing) =
+                        calculate_sizes_resolution(&target.physical_size.as_vec2(), aspect_ratio)
+                            .unwrap();
                     viewport.physical_position = boxing.as_uvec2();
                     viewport.physical_size = match position {
                         None => sizing.as_uvec2(),
@@ -191,8 +220,11 @@ fn adjust_viewport(
                     }
                 }
             },
-            CameraBox::ResolutionIntegerScale { allow_imperfect_aspect_ratios, resolution }=> {
-                let (boxing, sizing) =  if *allow_imperfect_aspect_ratios {
+            CameraBox::ResolutionIntegerScale {
+                allow_imperfect_aspect_ratios,
+                resolution,
+            } => {
+                let (boxing, sizing) = if *allow_imperfect_aspect_ratios {
                     match calculate_sizes_imperfect(&target.physical_size.as_vec2(), resolution) {
                         Ok(opt) => match opt {
                             None => {
@@ -200,7 +232,7 @@ fn adjust_viewport(
                                 continue;
                             }
                             Some(t) => t,
-                        }
+                        },
                         Err(_) => continue,
                     }
                 } else {
@@ -211,7 +243,7 @@ fn adjust_viewport(
                                 continue;
                             }
                             Some(t) => t,
-                        }
+                        },
                         Err(_) => continue,
                     }
                 };
@@ -221,18 +253,32 @@ fn adjust_viewport(
                     physical_size: sizing.as_uvec2(),
                     ..default()
                 });
-            },
-            CameraBox::LetterBox { top, bottom, strict_letterboxing } => match &mut camera.viewport {
+            }
+            CameraBox::LetterBox {
+                top,
+                bottom,
+                strict_letterboxing,
+            } => match &mut camera.viewport {
                 None => {
-                    let (mut boxing, mut sizing) = calculate_aspect_ratio_from_letterbox(&target.physical_size.as_vec2(), (top, bottom)).unwrap();
-                    if (sizing.y + boxing.y > target.physical_size.y as f32 || sizing.y <= 0.) && !strict_letterboxing{
+                    let (mut boxing, mut sizing) = calculate_aspect_ratio_from_letterbox(
+                        &target.physical_size.as_vec2(),
+                        (top, bottom),
+                    )
+                    .unwrap();
+                    if (sizing.y + boxing.y > target.physical_size.y as f32 || sizing.y <= 0.)
+                        && !strict_letterboxing
+                    {
                         sizing.y = target.physical_size.y as f32 / 2.;
                         boxing.y /= 2.;
                         let scale_factor = (target.physical_size.y as f32) / (sizing.y + boxing.y);
                         boxing.y *= scale_factor;
                     }
 
-                    if (sizing.y <= 0. || sizing.y > target.physical_size.y as f32 || sizing.y + boxing.y > target.physical_size.y as f32) && *strict_letterboxing {
+                    if (sizing.y <= 0.
+                        || sizing.y > target.physical_size.y as f32
+                        || sizing.y + boxing.y > target.physical_size.y as f32)
+                        && *strict_letterboxing
+                    {
                         sizing.y = target.physical_size.y as f32;
                         sizing.x = target.physical_size.x as f32;
                         boxing.y = 0.;
@@ -245,16 +291,26 @@ fn adjust_viewport(
                     });
                 }
                 Some(viewport) => {
-                    let (mut boxing, mut sizing) = calculate_aspect_ratio_from_letterbox(&target.physical_size.as_vec2(), (top, bottom)).unwrap();
+                    let (mut boxing, mut sizing) = calculate_aspect_ratio_from_letterbox(
+                        &target.physical_size.as_vec2(),
+                        (top, bottom),
+                    )
+                    .unwrap();
 
-                    if (sizing.y + boxing.y > target.physical_size.y as f32 || sizing.y <= 0.) && !strict_letterboxing{
+                    if (sizing.y + boxing.y > target.physical_size.y as f32 || sizing.y <= 0.)
+                        && !strict_letterboxing
+                    {
                         sizing.y = target.physical_size.y as f32 / 2.;
                         boxing.y /= 2.;
                         let scale_factor = (target.physical_size.y as f32) / (sizing.y + boxing.y);
                         boxing.y *= scale_factor;
                     }
 
-                    if (sizing.y <= 0. || sizing.y > target.physical_size.y as f32 || sizing.y + boxing.y > target.physical_size.y as f32) && *strict_letterboxing {
+                    if (sizing.y <= 0.
+                        || sizing.y > target.physical_size.y as f32
+                        || sizing.y + boxing.y > target.physical_size.y as f32)
+                        && *strict_letterboxing
+                    {
                         sizing.y = target.physical_size.y as f32;
                         sizing.x = target.physical_size.x as f32;
                         boxing.y = 0.;
@@ -266,9 +322,16 @@ fn adjust_viewport(
             },
             CameraBox::PillarBox { left, right } => match &mut camera.viewport {
                 None => {
-                    let (mut boxing, mut sizing) = calculate_aspect_ratio_from_pillarbox(&target.physical_size.as_vec2(), (left, right)).unwrap();
+                    let (mut boxing, mut sizing) = calculate_aspect_ratio_from_pillarbox(
+                        &target.physical_size.as_vec2(),
+                        (left, right),
+                    )
+                    .unwrap();
 
-                    if sizing.x <= 0. || sizing.x > target.physical_size.x as f32 || sizing.x + boxing.x > target.physical_size.x as f32 {
+                    if sizing.x <= 0.
+                        || sizing.x > target.physical_size.x as f32
+                        || sizing.x + boxing.x > target.physical_size.x as f32
+                    {
                         sizing.x = target.physical_size.x as f32;
                         sizing.x = target.physical_size.x as f32;
                         boxing.x = 0.;
@@ -281,9 +344,16 @@ fn adjust_viewport(
                     });
                 }
                 Some(viewport) => {
-                    let (mut boxing, mut sizing) = calculate_aspect_ratio_from_pillarbox(&target.physical_size.as_vec2(), (left, right)).unwrap();
+                    let (mut boxing, mut sizing) = calculate_aspect_ratio_from_pillarbox(
+                        &target.physical_size.as_vec2(),
+                        (left, right),
+                    )
+                    .unwrap();
 
-                    if sizing.x <= 0. || sizing.x > target.physical_size.x as f32 || sizing.x + boxing.x > target.physical_size.x as f32 {
+                    if sizing.x <= 0.
+                        || sizing.x > target.physical_size.x as f32
+                        || sizing.x + boxing.x > target.physical_size.x as f32
+                    {
                         sizing.x = target.physical_size.x as f32;
                         sizing.x = target.physical_size.x as f32;
                         boxing.x = 0.;
@@ -292,13 +362,15 @@ fn adjust_viewport(
                     viewport.physical_position = boxing.as_uvec2();
                     viewport.physical_size = sizing.as_uvec2();
                 }
-
-            }
+            },
         }
     }
 }
 
-fn calculate_sizes_resolution(physical_size: &Vec2, target_aspect_ratio: &AspectRatio) -> Option<(Vec2, Vec2)> {
+fn calculate_sizes_resolution(
+    physical_size: &Vec2,
+    target_aspect_ratio: &AspectRatio,
+) -> Option<(Vec2, Vec2)> {
     let physical_aspect_ratio = AspectRatio::try_from(*physical_size);
     if physical_aspect_ratio.is_err() {
         return None;
@@ -308,14 +380,23 @@ fn calculate_sizes_resolution(physical_size: &Vec2, target_aspect_ratio: &Aspect
     if physical_aspect_ratio.ratio() > target_aspect_ratio.ratio() {
         let render_height = physical_size.y;
         let render_width = render_height * target_aspect_ratio.ratio();
-        Some((Vec2::new(physical_size.x / 2. - render_width / 2., 0.), Vec2::new(render_width, render_height)))
+        Some((
+            Vec2::new(physical_size.x / 2. - render_width / 2., 0.),
+            Vec2::new(render_width, render_height),
+        ))
     } else {
         let render_width = physical_size.x;
         let render_height = render_width / target_aspect_ratio.ratio();
-        Some((Vec2::new(0., physical_size.y / 2. - render_height / 2.), Vec2::new(render_width, render_height)))
+        Some((
+            Vec2::new(0., physical_size.y / 2. - render_height / 2.),
+            Vec2::new(render_width, render_height),
+        ))
     }
 }
-fn calculate_sizes_imperfect(physical_size: &Vec2, desired_size: &Vec2) -> Result<Option<(Vec2, Vec2)>, ()> {
+fn calculate_sizes_imperfect(
+    physical_size: &Vec2,
+    desired_size: &Vec2,
+) -> Result<Option<(Vec2, Vec2)>, ()> {
     let desired_aspect_ratio = AspectRatio::try_from(*desired_size);
     let physical_aspect_ratio = AspectRatio::try_from(*physical_size);
     if desired_aspect_ratio.is_err() || physical_aspect_ratio.is_err() {
@@ -332,9 +413,9 @@ fn calculate_sizes_imperfect(physical_size: &Vec2, desired_size: &Vec2) -> Resul
     let small_height_scale = desired_size.y / physical_size.y;
     let small_width_scale = desired_size.x / physical_size.x;
 
-    let has_int_scale = desired_ar.ratio() == physical_ar.ratio() && (
-        (height_scale % 1. == 0. && width_scale % 1. == 0.) || (small_height_scale % 1. == 0. && small_width_scale % 1. == 0.)
-    );
+    let has_int_scale = desired_ar.ratio() == physical_ar.ratio()
+        && ((height_scale % 1. == 0. && width_scale % 1. == 0.)
+            || (small_height_scale % 1. == 0. && small_width_scale % 1. == 0.));
 
     // Integer Scaling Exists
     if has_int_scale {
@@ -362,9 +443,15 @@ fn calculate_sizes_imperfect(physical_size: &Vec2, desired_size: &Vec2) -> Resul
     let letterbox_size = physical_size.y as f32 - render_height;
     let pillarbox_size = physical_size.x as f32 - render_width;
 
-    Ok(Some((Vec2::new(pillarbox_size / 2., letterbox_size / 2.), Vec2::new(render_width, render_height))))
+    Ok(Some((
+        Vec2::new(pillarbox_size / 2., letterbox_size / 2.),
+        Vec2::new(render_width, render_height),
+    )))
 }
-fn calculate_sizes_perfect(physical_size: &Vec2, desired_size: &Vec2) -> Result<Option<(Vec2, Vec2)>, ()> {
+fn calculate_sizes_perfect(
+    physical_size: &Vec2,
+    desired_size: &Vec2,
+) -> Result<Option<(Vec2, Vec2)>, ()> {
     let desired_aspect_ratio = AspectRatio::try_from(*desired_size);
     let physical_aspect_ratio = AspectRatio::try_from(*physical_size);
     if desired_aspect_ratio.is_err() || physical_aspect_ratio.is_err() {
@@ -377,9 +464,8 @@ fn calculate_sizes_perfect(physical_size: &Vec2, desired_size: &Vec2) -> Result<
     let height_scale = physical_size.y / desired_size.y;
     let width_scale = physical_size.x / desired_size.x;
 
-    let has_int_scale = desired_ar.ratio() == physical_ar.ratio() && (
-        (height_scale % 1. == 0. && width_scale % 1. == 0.)
-    );
+    let has_int_scale = desired_ar.ratio() == physical_ar.ratio()
+        && (height_scale % 1. == 0. && width_scale % 1. == 0.);
 
     // Integer Scaling Exists
     if has_int_scale {
@@ -394,14 +480,18 @@ fn calculate_sizes_perfect(physical_size: &Vec2, desired_size: &Vec2) -> Result<
             width_scale
         } else {
             height_scale
-        }.ceil();
+        }
+        .ceil();
 
         let render_height = desired_size.y / best_divisor;
         let render_width = desired_size.x / best_divisor;
 
         let letterbox_size = physical_size.y - render_height;
         let pillarbox_size = physical_size.x - render_width;
-        Ok(Some((Vec2::new(pillarbox_size / 2., letterbox_size / 2.), Vec2::new(render_width, render_height))))
+        Ok(Some((
+            Vec2::new(pillarbox_size / 2., letterbox_size / 2.),
+            Vec2::new(render_width, render_height),
+        )))
     } else {
         let best_scale = if width_scale > height_scale {
             height_scale
@@ -423,24 +513,39 @@ fn calculate_sizes_perfect(physical_size: &Vec2, desired_size: &Vec2) -> Result<
 
         let letterbox_size = physical_size.y - render_height;
         let pillarbox_size = physical_size.x - render_width;
-        Ok(Some((Vec2::new(pillarbox_size / 2., letterbox_size / 2.), Vec2::new(render_width, render_height))))
+        Ok(Some((
+            Vec2::new(pillarbox_size / 2., letterbox_size / 2.),
+            Vec2::new(render_width, render_height),
+        )))
     }
 }
 
-fn calculate_aspect_ratio_from_letterbox(physical_size: &Vec2, letterbox: (&u32, &u32)) -> Option<(Vec2, Vec2)> {
+fn calculate_aspect_ratio_from_letterbox(
+    physical_size: &Vec2,
+    letterbox: (&u32, &u32),
+) -> Option<(Vec2, Vec2)> {
     let letterbox_height = (letterbox.0 + letterbox.1) as f32;
     let render_width = physical_size.x;
     let aspect_ratio = render_width / (physical_size.y - letterbox_height);
     let render_height = render_width / aspect_ratio;
 
-    Some((Vec2::new(0., *letterbox.0 as f32), Vec2::new(render_width, render_height)))
+    Some((
+        Vec2::new(0., *letterbox.0 as f32),
+        Vec2::new(render_width, render_height),
+    ))
 }
 
-fn calculate_aspect_ratio_from_pillarbox(physical_size: &Vec2, pillarbox: (&u32, &u32)) -> Option<(Vec2, Vec2)> {
+fn calculate_aspect_ratio_from_pillarbox(
+    physical_size: &Vec2,
+    pillarbox: (&u32, &u32),
+) -> Option<(Vec2, Vec2)> {
     let pillarbox_width = (pillarbox.0 + pillarbox.1) as f32;
     let render_height = physical_size.y;
     let aspect_ratio = (physical_size.x + pillarbox_width) / render_height;
     let render_width = render_height / aspect_ratio;
 
-    Some((Vec2::new(*pillarbox.0 as f32, 0.), Vec2::new(render_width, render_height)))
+    Some((
+        Vec2::new(*pillarbox.0 as f32, 0.),
+        Vec2::new(render_width, render_height),
+    ))
 }
