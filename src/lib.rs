@@ -1,3 +1,18 @@
+//! `bevy_simple_screen_boxing` aims to provide a simple, easy, and convenient way to set and manage
+//! camera boxing (that is, letterboxing and pillarboxing) in order to ensure that the output is 
+//! within the right resolution or aspect ratio. 
+//! 
+//! It provides ways to set a singular static resolution or aspect ratio, to always ensure the output
+//! is at a resolution that is an integer scale, or provide manually specified letter/pillarboxing.
+//! 
+//! This crate requires bevy version `0.16`
+//!
+//! ## Features
+//! - Provides an easy, but powerful, API for camera boxing!
+//! 
+//! ## Quick Start
+//! - Add the `CameraBoxingPlugin`
+//! - Add the `CameraBox` component to your Camera, and configure what you need.
 use bevy_app::{App, First, Plugin};
 use bevy_asset::{AssetEvent, Assets};
 use bevy_math::{AspectRatio, UVec2, Vec2};
@@ -9,6 +24,7 @@ use bevy_render::camera::{ManualTextureViews, Viewport};
 use bevy_utils::default;
 use bevy_window::{PrimaryWindow, Window};
 
+/// The Plugin that adds in all the systems for camera-boxing.
 pub struct CameraBoxingPlugin;
 impl Plugin for CameraBoxingPlugin {
     fn build(&self, app: &mut App) {
