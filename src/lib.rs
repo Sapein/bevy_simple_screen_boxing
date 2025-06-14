@@ -3,8 +3,8 @@ use bevy::prelude::*;
 use bevy::render::camera::{ManualTextureViews, Viewport};
 use bevy::window::PrimaryWindow;
 
-pub struct LetterboxPlugin;
-impl Plugin for LetterboxPlugin {
+pub struct CameraBoxingPlugin;
+impl Plugin for CameraBoxingPlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<CameraBox>()
             .add_event::<AdjustBoxing>()
