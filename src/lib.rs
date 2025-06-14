@@ -158,7 +158,7 @@ fn adjust_viewport(
                     if position.is_some_and(|u| u != viewport.physical_position) {
                         viewport.physical_position = position.unwrap();
                     } else if position.is_none() {
-                        viewport.physical_position = if (target.physical_size.x < viewport.physical_size.x) || (target.physical_size.y < viewport.physical_size.y) {
+                        viewport.physical_position = if (size.x < target.physical_size.x) && (size.y < target.physical_size.y) {
                             (target.physical_size - viewport.physical_size) / 2
                         } else {
                             UVec2::ZERO
@@ -175,7 +175,7 @@ fn adjust_viewport(
                         physical_position: match position {
                             Some(pos) => *pos,
                             None => {
-                                if (target.physical_size.x < size.x) || (target.physical_size.y < size.y) {
+                                if (size.x < target.physical_size.x) && (size.y < target.physical_size.y) {
                                     (target.physical_size - size) / 2
                                 } else {
                                     UVec2::ZERO
