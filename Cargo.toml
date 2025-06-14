@@ -4,4 +4,12 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-bevy = "0.16"
+bevy_app = "0.16"
+bevy_asset = "0.16"
+bevy_math = "0.16"
+bevy_reflect = "0.16"
+bevy_ecs = "0.16"
+bevy_image = "0.16"
+bevy_render = "0.16"
+bevy_utils = "0.16"
+bevy_window = "0.16"

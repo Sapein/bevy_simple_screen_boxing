@@ -1,7 +1,13 @@
-use bevy::math::AspectRatio;
-use bevy::prelude::*;
-use bevy::render::camera::{ManualTextureViews, Viewport};
-use bevy::window::PrimaryWindow;
+use bevy_app::{App, First, Plugin};
+use bevy_asset::{AssetEvent, Assets};
+use bevy_math::{AspectRatio, UVec2, Vec2};
+use bevy_reflect::Reflect;
+use bevy_ecs::prelude::*;
+use bevy_image::Image;
+use bevy_render::prelude::*;
+use bevy_render::camera::{ManualTextureViews, Viewport};
+use bevy_utils::default;
+use bevy_window::{PrimaryWindow, Window};
 
 pub struct CameraBoxingPlugin;
 impl Plugin for CameraBoxingPlugin {
@@ -69,7 +75,7 @@ pub enum CameraBox {
         bottom: u32,
 
         /// Whether we can attempt to scale the letterboxing if the output is smaller than
-        /// the desired sizing. If we can't, it will disable letterboxing when it can not accomodate
+        /// the desired sizing. If we can't, it will disable letterboxing when it can not accommodate
         /// the sizes requested.
         strict_letterboxing: bool,
     },
