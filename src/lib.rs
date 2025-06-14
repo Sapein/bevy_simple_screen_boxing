@@ -324,7 +324,6 @@ fn calculate_sizes_perfect(physical_size: &Vec2, desired_size: &Vec2) -> Result<
     let desired_ar = desired_aspect_ratio.unwrap();
     let physical_ar = physical_aspect_ratio.unwrap();
 
-    //NOTE: this does not really handle the case where the target size is smaller than the desired height/width.
     let height_scale = physical_size.y / desired_size.y;
     let width_scale = physical_size.x / desired_size.x;
 
