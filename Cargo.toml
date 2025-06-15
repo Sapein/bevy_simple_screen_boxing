@@ -19,3 +19,4 @@ bevy_image = { version ="0.16", default-features = false }
 bevy_render = { version ="0.16", default-features = false }
 bevy_utils = { version = "0.16", default-features = false }
 bevy_window = { version = "0.16", default-features = false }
+bevy_log = { version = "0.16", default-features = false }
