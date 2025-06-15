@@ -12,6 +12,8 @@ It provides a simple component `CameraBox` which can be used to configure the be
 ## Examples
 ### Integer Scaling
 ```rust
+use bevy_simple_screen_boxing::CameraBoxingPlugin;
+
 // Note, you will need to spawn the image.
 fn main() {
     App::new()
@@ -27,7 +29,7 @@ fn main() {
                 })
                 .set(ImagePlugin::default_nearest()),
         )
-        .add_plugins(CameraBoxPlugin)
+        .add_plugins(CameraBoxingPlugin)
         .add_systems(Startup, setup);
 }
 
