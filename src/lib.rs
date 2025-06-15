@@ -238,9 +238,17 @@ fn adjust_viewport(
                         camera.viewport = None;
                         continue;
                     }
-                    let (boxing, sizing) =
-                        calculate_sizes_resolution(&target.physical_size.as_vec2(), aspect_ratio)
-                            .unwrap();
+                    let (boxing, sizing) = match 
+                        calculate_sizes_resolution(&target.physical_size.as_vec2(), aspect_ratio) {
+                        Ok(t) => t,
+                        Err(e) => {
+                            warn!(
+                                "Error occurred when calculating aspect ratios for scaling: {:?}",
+                                e
+                            );
+                            continue
+                        }
+                    };
                     camera.viewport = Some(Viewport {
                         physical_position: boxing.as_uvec2(),
                         physical_size: match position {
@@ -267,9 +275,17 @@ fn adjust_viewport(
                         camera.viewport = None;
                         continue;
                     }
-                    let (boxing, sizing) =
-                        calculate_sizes_resolution(&target.physical_size.as_vec2(), aspect_ratio)
-                            .unwrap();
+                    let (boxing, sizing) = match 
+                        calculate_sizes_resolution(&target.physical_size.as_vec2(), aspect_ratio) {
+                        Ok(t) => t,
+                        Err(e) => {
+                            warn!(
+                                "Error occurred when calculating aspect ratios for scaling: {:?}",
+                                e
+                            );
+                            continue;
+                        }
+                    };
                     viewport.physical_position = boxing.as_uvec2();
                     viewport.physical_size = match position {
                         None => sizing.as_uvec2(),
@@ -431,24 +447,20 @@ fn adjust_viewport(
 fn calculate_sizes_resolution(
     physical_size: &Vec2,
     target_aspect_ratio: &AspectRatio,
-) -> Option<(Vec2, Vec2)> {
-    let physical_aspect_ratio = AspectRatio::try_from(*physical_size);
-    if physical_aspect_ratio.is_err() {
-        return None;
-    }
-    let physical_aspect_ratio = physical_aspect_ratio.unwrap();
+) -> Result<(Vec2, Vec2)> {
+    let physical_aspect_ratio = AspectRatio::try_from(*physical_size)?;
 
     if physical_aspect_ratio.ratio() > target_aspect_ratio.ratio() {
         let render_height = physical_size.y;
         let render_width = render_height * target_aspect_ratio.ratio();
-        Some((
+        Ok((
             Vec2::new(physical_size.x / 2. - render_width / 2., 0.),
             Vec2::new(render_width, render_height),
         ))
     } else {
         let render_width = physical_size.x;
         let render_height = render_width / target_aspect_ratio.ratio();
-        Some((
+        Ok((
             Vec2::new(0., physical_size.y / 2. - render_height / 2.),
             Vec2::new(render_width, render_height),
         ))
