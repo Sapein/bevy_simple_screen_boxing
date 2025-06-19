@@ -238,15 +238,17 @@ fn adjust_viewport(
                         camera.viewport = None;
                         continue;
                     }
-                    let (boxing, sizing) = match 
-                        calculate_sizes_resolution(&target.physical_size.as_vec2(), aspect_ratio) {
+                    let (boxing, sizing) = match calculate_sizes_resolution(
+                        &target.physical_size.as_vec2(),
+                        aspect_ratio,
+                    ) {
                         Ok(t) => t,
                         Err(e) => {
                             warn!(
                                 "Error occurred when calculating aspect ratios for scaling: {:?}",
                                 e
                             );
-                            continue
+                            continue;
                         }
                     };
                     camera.viewport = Some(Viewport {
@@ -275,8 +277,10 @@ fn adjust_viewport(
                         camera.viewport = None;
                         continue;
                     }
-                    let (boxing, sizing) = match 
-                        calculate_sizes_resolution(&target.physical_size.as_vec2(), aspect_ratio) {
+                    let (boxing, sizing) = match calculate_sizes_resolution(
+                        &target.physical_size.as_vec2(),
+                        aspect_ratio,
+                    ) {
                         Ok(t) => t,
                         Err(e) => {
                             warn!(
@@ -609,4 +613,42 @@ fn calculate_aspect_ratio_from_pillarbox(
         Vec2::new(*pillarbox.0 as f32, 0.),
         Vec2::new(render_width, render_height),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_calculate_letterbox() {
+        let inputs: [(u32, u32); 6] = [(100, 100), (100, 0), (100, 50), (50, 100), (0, 0), (0, 100)];
+        let physical_size = Vec2::new(640., 360.);
+        let outputs: [_; 6] = [
+            (Vec2::new(0., 100.), Vec2::new(640., 160.)),
+            (Vec2::new(0., 100.), Vec2::new(640., 260.)),
+            (Vec2::new(0., 100.), Vec2::new(640., 210.)),
+            (Vec2::new(0.,  50.), Vec2::new(640., 210.)),
+            (Vec2::new(0.,   0.), Vec2::new(640., 360.)),
+            (Vec2::new(0.,   0.), Vec2::new(640., 260.)),
+        ];
+        for (i, input) in inputs.iter().enumerate() {
+            assert_eq!(calculate_aspect_ratio_from_letterbox(&physical_size, (&input.0, &input.1)), outputs[i]);
+        }
+    }
+    #[test]
+    fn test_calculate_pillarbox() {
+        let inputs: [(u32, u32); 6] = [(100, 100), (100, 0), (100, 50), (50, 100), (0, 0), (0, 100)];
+        let physical_size = Vec2::new(640., 360.);
+        let outputs = [
+            (Vec2::new(100., 0.), Vec2::new(154.28572, 360.)),
+            (Vec2::new(100., 0.), Vec2::new(175.13513, 360.)),
+            (Vec2::new(100., 0.), Vec2::new(164.05063, 360.)),
+            (Vec2::new(50.,  0.), Vec2::new(164.05063, 360.)),
+            (Vec2::new( 0.,  0.), Vec2::new(202.5,     360.)),
+            (Vec2::new( 0.,  0.), Vec2::new(175.13513, 360.)),
+        ];
+        for (i, input) in inputs.iter().enumerate() {
+            assert_eq!(calculate_aspect_ratio_from_pillarbox(&physical_size, (&input.0, &input.1)), outputs[i]);
+        }
+    }
 }
