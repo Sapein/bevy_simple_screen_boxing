@@ -21,9 +21,8 @@ use bevy_image::Image;
 use bevy_log::{info, warn};
 use bevy_math::{AspectRatio, UVec2, Vec2};
 use bevy_reflect::Reflect;
-use bevy_render::camera::{ManualTextureViews, RenderTargetInfo, Viewport};
+use bevy_render::camera::{ManualTextureViews, Viewport};
 use bevy_render::prelude::*;
-use bevy_utils::default;
 use bevy_window::{PrimaryWindow, Window};
 
 /// The Plugin that adds in all the systems for camera-boxing.
@@ -333,15 +332,6 @@ struct Boxing {
     output_resolution: Vec2,
 }
 
-impl Boxing {
-    fn new(boxing_offset: Vec2, output_resolution: Vec2) -> Self {
-        Boxing {
-            boxing_offset,
-            output_resolution,
-        }
-    }
-}
-
 fn calculate_boxing_from_aspect_ratios(
     physical_size: &Vec2,
     physical_aspect_ratio: &AspectRatio,
@@ -497,6 +487,15 @@ fn calculate_pillarbox(physical_size: &Vec2, pillarbox: (&u32, &u32)) -> Boxing 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    impl Boxing {
+        fn new(boxing_offset: Vec2, output_resolution: Vec2) -> Self {
+            Boxing {
+                boxing_offset,
+                output_resolution,
+            }
+        }
+    }
 
     #[test]
     fn test_calculate_letterbox() {
