@@ -21,7 +21,7 @@ use bevy_image::Image;
 use bevy_log::{info, warn};
 use bevy_math::{AspectRatio, UVec2, Vec2};
 use bevy_reflect::Reflect;
-use bevy_render::camera::{ManualTextureViews, Viewport};
+use bevy_render::camera::{ManualTextureViews, RenderTargetInfo, Viewport};
 use bevy_render::prelude::*;
 use bevy_utils::default;
 use bevy_window::{PrimaryWindow, Window};
@@ -585,8 +585,7 @@ fn calculate_aspect_ratio_from_letterbox(
 ) -> (Vec2, Vec2) {
     let letterbox_height = (letterbox.0 + letterbox.1) as f32;
     let render_width = physical_size.x;
-    let aspect_ratio = render_width / (physical_size.y - letterbox_height);
-    let render_height = render_width / aspect_ratio;
+    let render_height = physical_size.y - letterbox_height;
 
     (
         Vec2::new(0., *letterbox.0 as f32),
@@ -600,8 +599,7 @@ fn calculate_aspect_ratio_from_pillarbox(
 ) -> (Vec2, Vec2) {
     let pillarbox_width = (pillarbox.0 + pillarbox.1) as f32;
     let render_height = physical_size.y;
-    let aspect_ratio = (physical_size.x + pillarbox_width) / render_height;
-    let render_width = render_height / aspect_ratio;
+    let render_width = physical_size.x - pillarbox_width;
 
     (
         Vec2::new(*pillarbox.0 as f32, 0.),
@@ -645,12 +643,12 @@ mod tests {
         let inputs: [(u32, u32); 6] = [(100, 100), (100, 0), (100, 50), (50, 100), (0, 0), (0, 100)];
         let physical_size = Vec2::new(640., 360.);
         let outputs = [
-            (Vec2::new(100., 0.), Vec2::new(154.28572, 360.)),
-            (Vec2::new(100., 0.), Vec2::new(175.13513, 360.)),
-            (Vec2::new(100., 0.), Vec2::new(164.05063, 360.)),
-            (Vec2::new(50.,  0.), Vec2::new(164.05063, 360.)),
-            (Vec2::new( 0.,  0.), Vec2::new(202.5,     360.)),
-            (Vec2::new( 0.,  0.), Vec2::new(175.13513, 360.)),
+            (Vec2::new(100., 0.), Vec2::new(440., 360.)),
+            (Vec2::new(100., 0.), Vec2::new(540., 360.)),
+            (Vec2::new(100., 0.), Vec2::new(490., 360.)),
+            (Vec2::new(50.,  0.), Vec2::new(490., 360.)),
+            (Vec2::new( 0.,  0.), Vec2::new(640., 360.)),
+            (Vec2::new( 0.,  0.), Vec2::new(540., 360.)),
         ];
         for (i, input) in inputs.iter().enumerate() {
             assert_eq!(calculate_aspect_ratio_from_pillarbox(&physical_size, (&input.0, &input.1)), outputs[i]);
