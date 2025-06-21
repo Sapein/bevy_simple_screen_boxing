@@ -6,6 +6,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 ## [Unreleased]
+- Update Documentation
+- Simplify Math for Static Letterbox.
+- Rewrite Math for Static Pillarbox, as it was wrong.
+- Simplifies a lot of internal code
+- Add in additional unit tests
 
 ## [0.1.0] - 2025-06-14
 - Initial Release
