@@ -54,7 +54,8 @@ impl Plugin for CameraBoxingPlugin {
 /// Configures how to box the output, with either: PillarBoxes, Letterboxes, or both.
 pub enum CameraBox {
     /// Keep the output at a static resolution, if possible, and box if it exceeds the resolution.
-    /// If the output is smaller than the resolution, it will output at the smaller resolution instead.
+    /// If the output is smaller than the resolution, it will output at the smaller resolution
+    /// instead.
     StaticResolution {
         resolution: UVec2,
 
@@ -62,8 +63,8 @@ pub enum CameraBox {
         position: Option<UVec2>,
     },
 
-    /// Keep the output as a static Aspect Ratio. If the output is not at the Aspect Ratio
-    /// apply boxing to force it into the correct Aspect Ratio.
+    /// Keep the output as a static Aspect Ratio. If the output is not at the Aspect Ratio apply 
+    /// boxing to force it into the correct Aspect Ratio.
     StaticAspectRatio {
         aspect_ratio: AspectRatio,
 
@@ -76,10 +77,16 @@ pub enum CameraBox {
     ResolutionIntegerScale {
         resolution: Vec2,
 
-        /// If this is true, then the output may not be *exactly* the proper Aspect Ratio (being off
-        /// by at most ~0.0001), especially when scaling down. If this is false, then we will do
-        /// whatever we can to maintain the Aspect Ratio, no matter what. Although it might still be
-        /// off but a small amount (about ~0.00001)
+        /// If this is true, then the output may not be *exactly* the proper Aspect Ratio if the
+        /// output resolution is smaller than the resolution specified, this will result in only
+        /// letterboxing or pillarboxing, but not windowboxing.
+        /// 
+        /// If this is false, then we will use a second method which will ensure that the Aspect
+        /// Ratio for the smaller output *will* be as exact as we can get it, and will ensure that
+        /// the output would be windowboxed properly. 
+        /// 
+        /// If the output resolution is expected to larger than, or equal to, the resolution
+        /// specified then this does not matter.
         allow_imperfect_aspect_ratios: bool,
     },
 
@@ -439,19 +446,10 @@ fn calculate_sizes_perfect(physical_size: &Vec2, desired_size: &Vec2) -> Result<
             height_scale
         } else {
             width_scale
-        };
+        }.floor();
 
-        let render_width = if best_scale >= 1. {
-            desired_size.x * best_scale.floor()
-        } else {
-            desired_size.x * best_scale
-        };
-
-        let render_height = if best_scale >= 1. {
-            desired_size.y * best_scale.floor()
-        } else {
-            desired_size.y * best_scale
-        };
+        let render_width = desired_size.x * best_scale;
+        let render_height = desired_size.y * best_scale;
 
         let letterbox_size = physical_size.y - render_height;
         let pillarbox_size = physical_size.x - render_width;
