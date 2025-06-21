@@ -169,7 +169,7 @@ fn adjust_viewport(
                 Some(viewport) => {
                     if &viewport.physical_size != size {
                         if size.x > viewport.physical_size.x || size.y > viewport.physical_size.y {
-                            viewport.physical_size = clamp_size(size, &target.physical_size);
+                            viewport.physical_size = size.min(target.physical_size);
                         } else {
                             viewport.clamp_to_size(*size);
                         }
@@ -622,17 +622,6 @@ fn calculate_pillarbox(
         boxing_offset: Vec2::new(*pillarbox.0 as f32, 0.),
         output_resolution: Vec2::new(render_width, render_height),
     }
-}
-
-fn clamp_size(size: &UVec2, limits: &UVec2) -> UVec2{
-    let mut final_size = *size;
-    if size.x > limits.x {
-        final_size.x = limits.x;
-    }
-    if size.y > limits.y {
-        final_size.y = limits.y;
-    }
-    final_size
 }
 
 #[cfg(test)]
