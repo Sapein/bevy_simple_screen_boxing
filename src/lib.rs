@@ -168,11 +168,7 @@ fn adjust_viewport(
             } => match &mut camera.viewport {
                 Some(viewport) => {
                     if &viewport.physical_size != size {
-                        if size.x > viewport.physical_size.x || size.y > viewport.physical_size.y {
-                            viewport.physical_size = size.min(target.physical_size);
-                        } else {
-                            viewport.clamp_to_size(*size);
-                        }
+                        viewport.physical_size = size.clamp(UVec2::ONE, target.physical_size);
                     }
                     if position.is_some_and(|u| u != viewport.physical_position) {
                         viewport.physical_position = position.unwrap();
@@ -188,13 +184,7 @@ fn adjust_viewport(
                 }
                 None => {
                     camera.viewport = Some(Viewport {
-                        physical_size: if (target.physical_size.x < size.x)
-                            || (target.physical_size.y < size.y)
-                        {
-                            *size
-                        } else {
-                            target.physical_size
-                        },
+                        physical_size: size.clamp(UVec2::ONE, target.physical_size),
                         physical_position: match position {
                             Some(pos) => *pos,
                             None => {
