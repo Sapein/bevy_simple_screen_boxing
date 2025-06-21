@@ -165,282 +165,164 @@ fn adjust_viewport(
             CameraBox::StaticResolution {
                 resolution: size,
                 position,
-            } => match &mut camera.viewport {
-                Some(viewport) => {
-                    if &viewport.physical_size != size {
-                        viewport.physical_size = size.clamp(UVec2::ONE, target.physical_size);
-                    }
-                    if position.is_some_and(|u| u != viewport.physical_position) {
-                        viewport.physical_position = position.unwrap();
-                    } else if position.is_none() {
-                        viewport.physical_position = if (size.x < target.physical_size.x)
-                            && (size.y < target.physical_size.y)
-                        {
-                            (target.physical_size - viewport.physical_size) / 2
-                        } else {
-                            UVec2::ZERO
-                        }
-                    }
+            } => {
+                let mut viewport = match &mut camera.viewport {
+                    None => Viewport::default(),
+                    Some(viewport) => viewport.to_owned(),
+                };
+
+                if &viewport.physical_size != size {
+                    viewport.physical_size = size.clamp(UVec2::ONE, target.physical_size);
                 }
-                None => {
-                    camera.viewport = Some(Viewport {
-                        physical_size: size.clamp(UVec2::ONE, target.physical_size),
-                        physical_position: match position {
-                            Some(pos) => *pos,
-                            None => {
-                                if (size.x < target.physical_size.x)
-                                    && (size.y < target.physical_size.y)
-                                {
-                                    (target.physical_size - size) / 2
-                                } else {
-                                    UVec2::ZERO
-                                }
-                            }
-                        },
-                        ..default()
-                    })
-                }
-            },
+
+                viewport.physical_position = if position
+                    .is_none_or(|u| u != viewport.physical_position)
+                {
+                    (target.physical_size - viewport.physical_size / 2).min(target.physical_size)
+                } else {
+                    position.unwrap()
+                };
+                camera.viewport = Some(viewport);
+            }
             CameraBox::StaticAspectRatio {
                 aspect_ratio,
                 position,
-            } => match &mut camera.viewport {
-                None => {
-                    let physical_aspect_ratio = match AspectRatio::try_from(
-                        target.physical_size.as_vec2(),
-                    ) {
+            } => {
+                let mut viewport = match &mut camera.viewport {
+                    None => Viewport::default(),
+                    Some(viewport) => viewport.to_owned(),
+                };
+
+                let physical_aspect_ratio =
+                    match AspectRatio::try_from(target.physical_size.as_vec2()) {
+                        Ok(ar) if ar.ratio() == aspect_ratio.ratio() => {
+                            camera.viewport = None;
+                            continue;
+                        }
+                        Err(e) => {
+                            warn!(
+                                "Error occurred when calculating aspect ratios for scaling: {:?}",
+                                e
+                            );
+                            continue;
+                        }
                         Ok(ar) => ar,
-                        Err(e) => {
-                            warn!(
-                                "Error occurred when calculating aspect ratios for scaling: {:?}",
-                                e
-                            );
-                            continue;
-                        }
                     };
-                    if physical_aspect_ratio.ratio() == aspect_ratio.ratio() {
-                        camera.viewport = None;
-                        continue;
-                    }
-                    let Boxing {
-                        boxing_offset,
-                        output_resolution: render_size,
-                    } = match calculate_sizes_resolution(
-                        &target.physical_size.as_vec2(),
-                        aspect_ratio,
-                    ) {
-                        Ok(t) => t,
-                        Err(e) => {
-                            warn!(
-                                "Error occurred when calculating aspect ratios for scaling: {:?}",
-                                e
-                            );
-                            continue;
-                        }
-                    };
-                    camera.viewport = Some(Viewport {
-                        physical_position: match position {
-                            None => boxing_offset.as_uvec2(),
-                            Some(pos) => *pos,
-                        },
-                        physical_size: render_size.as_uvec2(),
-                        ..default()
-                    });
-                }
-                Some(viewport) => {
-                    let physical_aspect_ratio = match AspectRatio::try_from(
-                        target.physical_size.as_vec2(),
-                    ) {
-                        Ok(ar) => ar,
-                        Err(e) => {
-                            warn!(
-                                "Error occurred when calculating aspect ratios for scaling: {:?}",
-                                e
-                            );
-                            continue;
-                        }
-                    };
-                    if physical_aspect_ratio.ratio() == aspect_ratio.ratio() {
-                        camera.viewport = None;
-                        continue;
-                    }
-                    let Boxing {
-                        boxing_offset,
-                        output_resolution: render_size,
-                    } = match calculate_sizes_resolution(
-                        &target.physical_size.as_vec2(),
-                        aspect_ratio,
-                    ) {
-                        Ok(t) => t,
-                        Err(e) => {
-                            warn!(
-                                "Error occurred when calculating aspect ratios for scaling: {:?}",
-                                e
-                            );
-                            continue;
-                        }
-                    };
-                    viewport.physical_position = match position {
-                        None => boxing_offset.as_uvec2(),
-                        Some(pos) => *pos,
-                    };
-                    viewport.physical_size = render_size.as_uvec2();
-                }
-            },
+
+                let Boxing {
+                    boxing_offset,
+                    output_resolution: render_size,
+                } = calculate_boxing_from_aspect_ratios(
+                    &target.physical_size.as_vec2(),
+                    &physical_aspect_ratio,
+                    aspect_ratio,
+                );
+
+                viewport.physical_position = match position {
+                    None => boxing_offset.as_uvec2(),
+                    Some(pos) => *pos,
+                };
+                viewport.physical_size = render_size.as_uvec2();
+                camera.viewport = Some(viewport);
+            }
+
             CameraBox::ResolutionIntegerScale {
                 allow_imperfect_aspect_ratios,
                 resolution,
             } => {
+                let mut viewport = match &mut camera.viewport {
+                    None => Viewport::default(),
+                    Some(viewport) => viewport.to_owned(),
+                };
                 let Boxing {
                     boxing_offset,
                     output_resolution,
-                } = if *allow_imperfect_aspect_ratios {
-                    match calculate_sizes_imperfect(&target.physical_size.as_vec2(), resolution) {
-                        Ok(None) => {
-                            camera.viewport = None;
-                            continue;
-                        }
-                        Ok(Some(t)) => t,
-                        Err(e) => {
-                            warn!(
-                                "Error occurred when calculating aspect ratios for scaling: {:?}",
-                                e
-                            );
-                            continue;
-                        }
-                    }
+                } = match if *allow_imperfect_aspect_ratios {
+                    calculate_sizes_imperfect(&target.physical_size.as_vec2(), resolution)
                 } else {
-                    match calculate_sizes_perfect(&target.physical_size.as_vec2(), resolution) {
-                        Ok(None) => {
-                            camera.viewport = None;
-                            continue;
-                        }
-                        Ok(Some(t)) => t,
-                        Err(e) => {
-                            warn!(
-                                "Error occurred when calculating aspect ratios for scaling: {:?}",
-                                e
-                            );
-                            continue;
-                        }
+                    calculate_sizes_perfect(&target.physical_size.as_vec2(), resolution)
+                } {
+                    Ok(None) => {
+                        camera.viewport = None;
+                        continue;
+                    }
+                    Ok(Some(t)) => t,
+                    Err(e) => {
+                        warn!(
+                            "Error occurred when calculating aspect ratios for scaling: {:?}",
+                            e
+                        );
+                        continue;
                     }
                 };
 
-                camera.viewport = Some(Viewport {
-                    physical_position: boxing_offset.as_uvec2(),
-                    physical_size: output_resolution.as_uvec2(),
-                    ..default()
-                });
+                viewport.physical_position = boxing_offset.as_uvec2();
+                viewport.physical_size = output_resolution.as_uvec2();
+                camera.viewport = Some(viewport);
             }
             CameraBox::LetterBox {
                 top,
                 bottom,
                 strict_letterboxing,
-            } => match &mut camera.viewport {
-                None => {
-                    let Boxing {
-                        mut boxing_offset,
-                        mut output_resolution,
-                    } = calculate_letterbox(&target.physical_size.as_vec2(), (top, bottom));
-                    if (output_resolution.y + boxing_offset.y > target.physical_size.y as f32
-                        || output_resolution.y <= 0.)
-                        && !strict_letterboxing
-                    {
-                        output_resolution.y = target.physical_size.y as f32 / 2.;
-                        boxing_offset.y /= 2.;
-                        let scale_factor = (target.physical_size.y as f32)
-                            / (output_resolution.y + boxing_offset.y);
-                        boxing_offset.y *= scale_factor;
-                    }
+            } => {
+                let mut viewport = match &camera.viewport {
+                    None => Viewport::default(),
+                    Some(viewport) => viewport.to_owned(),
+                };
 
-                    if (output_resolution.y <= 0.
-                        || output_resolution.y > target.physical_size.y as f32
-                        || output_resolution.y + boxing_offset.y > target.physical_size.y as f32)
-                        && *strict_letterboxing
-                    {
-                        output_resolution.y = target.physical_size.y as f32;
-                        output_resolution.x = target.physical_size.x as f32;
-                        boxing_offset.y = 0.;
-                    }
-
-                    camera.viewport = Some(Viewport {
-                        physical_position: boxing_offset.as_uvec2(),
-                        physical_size: output_resolution.as_uvec2(),
-                        ..default()
-                    });
+                let Boxing {
+                    mut boxing_offset,
+                    mut output_resolution,
+                } = calculate_letterbox(&target.physical_size.as_vec2(), (top, bottom));
+                if (output_resolution.y + boxing_offset.y > target.physical_size.y as f32
+                    || output_resolution.y <= 0.)
+                    && !strict_letterboxing
+                {
+                    output_resolution.y = target.physical_size.y as f32 / 2.;
+                    boxing_offset.y /= 2.;
+                    let scale_factor =
+                        (target.physical_size.y as f32) / (output_resolution.y + boxing_offset.y);
+                    boxing_offset.y *= scale_factor;
                 }
-                Some(viewport) => {
-                    let Boxing {
-                        mut boxing_offset,
-                        mut output_resolution,
-                    } = calculate_letterbox(&target.physical_size.as_vec2(), (top, bottom));
 
-                    if (output_resolution.y + boxing_offset.y > target.physical_size.y as f32
-                        || output_resolution.y <= 0.)
-                        && !strict_letterboxing
-                    {
-                        output_resolution.y = target.physical_size.y as f32 / 2.;
-                        boxing_offset.y /= 2.;
-                        let scale_factor = (target.physical_size.y as f32)
-                            / (output_resolution.y + boxing_offset.y);
-                        boxing_offset.y *= scale_factor;
-                    }
-
-                    if (output_resolution.y <= 0.
-                        || output_resolution.y > target.physical_size.y as f32
-                        || output_resolution.y + boxing_offset.y > target.physical_size.y as f32)
-                        && *strict_letterboxing
-                    {
-                        output_resolution.y = target.physical_size.y as f32;
-                        output_resolution.x = target.physical_size.x as f32;
-                        boxing_offset.y = 0.;
-                    }
-
-                    viewport.physical_position = boxing_offset.as_uvec2();
-                    viewport.physical_size = output_resolution.as_uvec2();
+                if (output_resolution.y <= 0.
+                    || output_resolution.y > target.physical_size.y as f32
+                    || output_resolution.y + boxing_offset.y > target.physical_size.y as f32)
+                    && *strict_letterboxing
+                {
+                    output_resolution.y = target.physical_size.y as f32;
+                    output_resolution.x = target.physical_size.x as f32;
+                    boxing_offset.y = 0.;
                 }
-            },
-            CameraBox::PillarBox { left, right } => match &mut camera.viewport {
-                None => {
-                    let Boxing {
-                        mut boxing_offset,
-                        mut output_resolution,
-                    } = calculate_pillarbox(&target.physical_size.as_vec2(), (left, right));
 
-                    if output_resolution.x <= 0.
-                        || output_resolution.x > target.physical_size.x as f32
-                        || output_resolution.x + boxing_offset.x > target.physical_size.x as f32
-                    {
-                        output_resolution.x = target.physical_size.x as f32;
-                        output_resolution.x = target.physical_size.x as f32;
-                        boxing_offset.x = 0.;
-                    }
+                viewport.physical_position = boxing_offset.as_uvec2();
+                viewport.physical_size = output_resolution.as_uvec2();
+                camera.viewport = Some(viewport);
+            }
+            CameraBox::PillarBox { left, right } => {
+                let mut viewport = match &mut camera.viewport {
+                    None => Viewport::default(),
+                    Some(viewport) => viewport.to_owned(),
+                };
 
-                    camera.viewport = Some(Viewport {
-                        physical_position: boxing_offset.as_uvec2(),
-                        physical_size: output_resolution.as_uvec2(),
-                        ..default()
-                    });
+                let Boxing {
+                    mut boxing_offset,
+                    mut output_resolution,
+                } = calculate_pillarbox(&target.physical_size.as_vec2(), (left, right));
+
+                if output_resolution.x <= 0.
+                    || output_resolution.x > target.physical_size.x as f32
+                    || output_resolution.x + boxing_offset.x > target.physical_size.x as f32
+                {
+                    output_resolution.x = target.physical_size.x as f32;
+                    output_resolution.x = target.physical_size.x as f32;
+                    boxing_offset.x = 0.;
                 }
-                Some(viewport) => {
-                    let Boxing {
-                        mut boxing_offset,
-                        mut output_resolution,
-                    } = calculate_pillarbox(&target.physical_size.as_vec2(), (left, right));
 
-                    if output_resolution.x <= 0.
-                        || output_resolution.x > target.physical_size.x as f32
-                        || output_resolution.x + boxing_offset.x > target.physical_size.x as f32
-                    {
-                        output_resolution.x = target.physical_size.x as f32;
-                        output_resolution.x = target.physical_size.x as f32;
-                        boxing_offset.x = 0.;
-                    }
-
-                    viewport.physical_position = boxing_offset.as_uvec2();
-                    viewport.physical_size = output_resolution.as_uvec2();
-                }
-            },
+                viewport.physical_position = boxing_offset.as_uvec2();
+                viewport.physical_size = output_resolution.as_uvec2();
+                camera.viewport = Some(viewport);
+            }
         }
     }
 }
@@ -460,26 +342,25 @@ impl Boxing {
     }
 }
 
-fn calculate_sizes_resolution(
+fn calculate_boxing_from_aspect_ratios(
     physical_size: &Vec2,
+    physical_aspect_ratio: &AspectRatio,
     target_aspect_ratio: &AspectRatio,
-) -> Result<Boxing> {
-    let physical_aspect_ratio = AspectRatio::try_from(*physical_size)?;
-
+) -> Boxing {
     if physical_aspect_ratio.ratio() > target_aspect_ratio.ratio() {
         let render_height = physical_size.y;
         let render_width = render_height * target_aspect_ratio.ratio();
-        Ok(Boxing {
+        Boxing {
             boxing_offset: Vec2::new(physical_size.x / 2. - render_width / 2., 0.),
             output_resolution: Vec2::new(render_width, render_height),
-        })
+        }
     } else {
         let render_width = physical_size.x;
         let render_height = render_width / target_aspect_ratio.ratio();
-        Ok(Boxing {
+        Boxing {
             boxing_offset: Vec2::new(0., physical_size.y / 2. - render_height / 2.),
             output_resolution: Vec2::new(render_width, render_height),
-        })
+        }
     }
 }
 fn calculate_sizes_imperfect(physical_size: &Vec2, desired_size: &Vec2) -> Result<Option<Boxing>> {
