@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - All Change-Detection Systems have been updated to only run if at least one entity with a `CameraBox` component exists.
 
 ## [0.1.1] - 2025-06-22  
+- Added Logging instead of skipping errors and other issues.
 - Update Documentation
 - Simplify the Math for Static Letterbox.
 - Rewrite the Math for Static Pillarbox, as it was wrong.
