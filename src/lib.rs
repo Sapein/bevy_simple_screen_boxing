@@ -1178,7 +1178,7 @@ mod tests {
             
             app.init_resource::<ManualTextureViews>();
             app.init_resource::<Assets<Image>>();
-            app.add_systems(First, images_changed);
+            app.add_systems(First, texture_views_changed);
             app.add_event::<AdjustBoxing>();
             
             // let format = [TextureFormat::R8Snorm];
