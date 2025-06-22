@@ -784,12 +784,11 @@ mod tests {
     }
     
     mod systems {
-        use bevy_render::camera::{ManualTextureView, RenderTarget};
-        use bevy_render::render_resource::{BufferUsages, BufferVec, Texture, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages};
-        use bevy_render::renderer::RenderDevice;
-        use bevy_window::{WindowRef, WindowResized, WindowResolution};
         use super::*;
-        
+        use bevy_asset::AssetId;
+        use bevy_render::camera::RenderTarget;
+        use bevy_window::{WindowRef, WindowResolution};
+
         const W360P: UVec2 = UVec2::new(640, 360);
         const W720P: UVec2 = UVec2::new(1280, 720);
         const W180P: UVec2 = UVec2::new(320, 180);
@@ -1154,55 +1153,58 @@ mod tests {
 
             app.init_resource::<ManualTextureViews>();
             app.init_resource::<Assets<Image>>();
-            app.add_systems(First, images_changed);
+            app.add_event::<AssetEvent<Image>>();
             app.add_event::<AdjustBoxing>();
-            
+            app.add_systems(First, images_changed
+                .run_if(resource_changed_or_removed::<Assets<Image>>.or(on_event::<AssetEvent<Image>>)));
+            app.update();
+
             let mut images = app.world_mut().resource_mut::<Assets<Image>>();
             images.add(Image::default());
             app.update();
             let adjust_boxing_events = app.world().resource::<Events<AdjustBoxing>>();
             let mut adjust_boxing_reader = adjust_boxing_events.get_cursor();
             let boxing_adjust = adjust_boxing_reader.read(adjust_boxing_events).next();
-            
-
             assert!(boxing_adjust.is_some());
+            
+            let event = AssetEvent::Modified {
+                id: AssetId::default(),
+            };
+            app.world_mut().send_event::<AssetEvent<Image>>(event);
+            app.update();
+            let adjust_boxing_events = app.world().resource::<Events<AdjustBoxing>>();
+            let mut adjust_boxing_reader = adjust_boxing_events.get_cursor();
+            let boxing_adjust = adjust_boxing_reader.read(adjust_boxing_events).next();
+            assert!(boxing_adjust.is_some());
+            
+            app.update();
+            
+            let adjust_boxing_events = app.world().resource::<Events<AdjustBoxing>>();
+            let mut adjust_boxing_reader = adjust_boxing_events.get_cursor();
+            let boxing_adjust = adjust_boxing_reader.read(adjust_boxing_events).next();
+            assert!(boxing_adjust.is_none());
         }
         
         #[test]
-        #[ignore]
         fn test_textureviews_changed_detection() {
-            // This test does not work, and I'm not quite sure how to set it up.
-            // The issue is that we need a WGPU Device, but our crate doesn't take a dependency
-            // on WGPU, there's probably a way to do this, but I don't know how atm.
             let mut app = App::new();
             
             app.init_resource::<ManualTextureViews>();
             app.init_resource::<Assets<Image>>();
-            app.add_systems(First, texture_views_changed);
             app.add_event::<AdjustBoxing>();
+            app.update();
+            app.add_systems(First, texture_views_changed.run_if(resource_changed_or_removed::<ManualTextureViews>));
             
-            // let format = [TextureFormat::R8Snorm];
-            // let device = Device
-            // let render_device = RenderDevice::new()
-            // let texture = RenderDevice::create_texture(TextureDescriptor {
-            //     label: None,
-            //     size: Default::default(),
-            //     mip_level_count: 0,
-            //     sample_count: 0,
-            //     dimension: TextureDimension::D1,
-            //     format: TextureFormat::R8Unorm,
-            //     usage: TextureUsages::STORAGE_ATOMIC,
-            //     view_formats: &format,
-            // });
-            let mut texture_views = app.world_mut().resource_mut::<ManualTextureViews>();
+            // While this doesn't actually change anything it *does* work by forcing the Bevy
+            // to detect a change, even though we don't do anything, since Bevy has to assume that
+            // any mutable access might've changed something, it seems.
+            let texture_views = app.world_mut().resource_mut::<ManualTextureViews>();
             app.update();
             let adjust_boxing_events = app.world().resource::<Events<AdjustBoxing>>();
             let mut adjust_boxing_reader = adjust_boxing_events.get_cursor();
             let boxing_adjust = adjust_boxing_reader.read(adjust_boxing_events).next();
             
-            
             assert!(boxing_adjust.is_some());
-            todo!("This isn't implemented yet because we don't quite know how to implement the test properly.");
         }
     }
 }
