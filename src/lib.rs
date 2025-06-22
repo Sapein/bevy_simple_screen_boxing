@@ -1712,12 +1712,6 @@ mod tests {
                 ))
                 .id();
             app.world_mut().spawn((
-                Camera {
-                    viewport: None,
-                    is_active: true,
-                    target: RenderTarget::Window(WindowRef::Primary),
-                    ..Camera::default()
-                },
                 CameraBox::StaticResolution {
                     resolution: W360P,
                     position: None,
