@@ -6,8 +6,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 ## [Unreleased]
-- Rename `CameraBox::ResolutionIntegerScale.allow_imperfect_aspect_ratios` to `CameraBox::ResolutionIntegerScale.allow_imperfect_downscaled_boxing` as it's a better name.
 - Implement `strict_pillarboxing` on `CameraBox::PillarBox`
+- Rename `CameraBox::ResolutionIntegerScale.allow_imperfect_aspect_ratios` to `CameraBox::ResolutionIntegerScale.allow_imperfect_downscaled_boxing` as it's a better name.
+- Run `Assets<Image>` change detection system when the resource is changed, in addition to when `AssetEvents` is emitted.
 
 ## [0.1.1] - 2025-06-22  
 - Update Documentation

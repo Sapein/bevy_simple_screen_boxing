@@ -32,7 +32,7 @@ impl Plugin for CameraBoxingPlugin {
         app.register_type::<CameraBox>()
             .add_event::<AdjustBoxing>()
             .add_systems(First, (windows_changed, camerabox_changed))
-            .add_systems(First, images_changed.run_if(on_event::<AssetEvent<Image>>))
+            .add_systems(First, images_changed.run_if(on_event::<AssetEvent<Image>>.or(resource_changed_or_removed::<Assets<Image>>)))
             .add_systems(
                 First,
                 texture_views_changed.run_if(resource_changed_or_removed::<ManualTextureViews>),
