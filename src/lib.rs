@@ -27,6 +27,7 @@ use bevy_window::{PrimaryWindow, Window};
 
 /// The Plugin that adds in all the systems for camera-boxing.
 pub struct CameraBoxingPlugin;
+
 impl Plugin for CameraBoxingPlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<CameraBox>()
@@ -140,10 +141,18 @@ fn texture_views_changed(mut boxing_event: EventWriter<AdjustBoxing>) {
     boxing_event.write(AdjustBoxing);
 }
 
-type CameraChanged = Or<(Changed<CameraBox>, Changed<Camera>)>;
+fn camera_changed(
+    mut boxing_event: EventWriter<AdjustBoxing>,
+    cameras: Query<(Entity, &Camera), Changed<Camera>>,
+) {
+    if !cameras.is_empty() {
+        boxing_event.write(AdjustBoxing);
+    }
+}
+
 fn camerabox_changed(
     mut boxing_event: EventWriter<AdjustBoxing>,
-    boxes: Query<&CameraBox, CameraChanged>,
+    boxes: Query<&CameraBox, Changed<CameraBox>>,
 ) {
     if !boxes.is_empty() {
         boxing_event.write(AdjustBoxing);
@@ -159,6 +168,9 @@ fn adjust_viewport(
 ) {
     let primary_window = primary_window.map(|e| e.into_inner());
     for (mut camera, camera_box) in boxed_cameras.iter_mut() {
+        if !camera.is_active {
+            continue;
+        }
         let target = camera.target.normalize(primary_window);
 
         let target = match target
@@ -183,19 +195,33 @@ fn adjust_viewport(
                     Some(viewport) => viewport.to_owned(),
                 };
 
-                if &target.physical_size == size && position.is_none() {
+                if &target.physical_size == size && position.is_none()
+                {
                     camera.viewport = None;
                     continue;
+                } else if position.is_some() {
+                    let position = position.unwrap();
+                    let offset = size.clamp(UVec2::ZERO, target.physical_size) + position;
+                    if (target.physical_size.x < offset.x || target.physical_size.y < offset.y) && viewport.physical_position == UVec2::ZERO {
+                        continue;
+                    }
                 }
-
+                
                 if &viewport.physical_size != size {
                     viewport.physical_size = size.clamp(UVec2::ONE, target.physical_size);
                 }
-
+                
                 viewport.physical_position = if position.is_none() {
                     (target.physical_size - viewport.physical_size.clamp(UVec2::ZERO, target.physical_size)) / 2
                 } else {
-                    position.unwrap()
+                    let position = position.unwrap();
+                    let offset = size.clamp(UVec2::ZERO, target.physical_size) + position;
+                    if target.physical_size.x >= offset.x && target.physical_size.y >= offset.y {
+                        position
+                    } else {
+                        warn!("Unable to place output with resolution {} at position {} within Render Target with size {}. Placing at (0,0) instead", size, position, target.physical_size);
+                        UVec2::ZERO
+                    }
                 };
                 camera.viewport = Some(viewport);
             }
@@ -1333,10 +1359,8 @@ mod tests {
                 .get::<Camera>(camera_id)
                 .unwrap()
                 .to_owned()
-                .viewport
-                .unwrap();
-            assert_eq!(viewport.physical_position, UVec2::new(1, 0));
-            assert_eq!(viewport.physical_size, W360P);
+                .viewport;
+            assert!(viewport.is_none());
 
             let (mut app, camera_id) = setup_app(
                 CameraBox::StaticResolution {
@@ -1637,7 +1661,7 @@ mod tests {
                     },
                 ))
                 .id();
-            app.add_systems(First, camerabox_changed);
+            app.add_systems(First, camera_changed);
             app.add_event::<AdjustBoxing>();
             app.update();
             let mut camera = app.world_mut().get_mut::<Camera>(camera_id).unwrap();
