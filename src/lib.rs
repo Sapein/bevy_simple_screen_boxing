@@ -186,11 +186,9 @@ fn adjust_viewport(
                     viewport.physical_size = size.clamp(UVec2::ONE, target.physical_size);
                 }
 
-                viewport.physical_position = if position
-                    .is_none_or(|u| u != viewport.physical_position)
+                viewport.physical_position = if position.is_none()
                 {
-                    let placement = (target.physical_size - viewport.physical_size) / 2;
-                    placement
+                    (target.physical_size - viewport.physical_size) / 2
                 } else {
                     position.unwrap()
                 };
@@ -208,7 +206,13 @@ fn adjust_viewport(
                 let physical_aspect_ratio =
                     match AspectRatio::try_from(target.physical_size.as_vec2()) {
                         Ok(ar) if ar.ratio() == aspect_ratio.ratio() => {
-                            camera.viewport = None;
+                            if position.is_none() {
+                                camera.viewport = None;
+                            } else {
+                                viewport.physical_position = position.unwrap();
+                                viewport.physical_size = target.physical_size;
+                                camera.viewport = Some(viewport);
+                            }
                             continue;
                         }
                         Err(e) => {
@@ -831,33 +835,56 @@ mod tests {
         
         #[test]
         fn test_basic_resolution() {
-            {
-                let (mut app, camera_id) = setup_app(CameraBox::StaticResolution { resolution: (640, 360).into(), position: None}, (640., 360.).into());
-                app.update();
-                let viewport = app.world().get::<Camera>(camera_id).unwrap().to_owned().viewport;
-                assert!(viewport.is_none());
-            }
-            {
-                let (mut app, camera_id) = setup_app(CameraBox::StaticResolution { resolution: (640, 360).into(), position: None}, (1280., 720.).into());
-                app.update();
-                let viewport = app.world().get::<Camera>(camera_id).unwrap().to_owned().viewport.unwrap();
-                assert_eq!(viewport.physical_position, UVec2::new(320, 180));
-                assert_eq!(viewport.physical_size, UVec2::new(640, 360));
-            }
-            {
-                let (mut app, camera_id) = setup_app(CameraBox::StaticResolution { resolution: (640, 360).into(), position: None}, (620., 180.).into());
-                app.update();
-                let viewport = app.world().get::<Camera>(camera_id).unwrap().to_owned().viewport.unwrap();
-                assert_eq!(viewport.physical_position, UVec2::new(0, 0));
-                assert_eq!(viewport.physical_size, UVec2::new(620, 180));
-            }
-        }
+            let (mut app, camera_id) = setup_app(CameraBox::StaticResolution { resolution: (640, 360).into(), position: None}, (640., 360.).into());
+            app.update();
+            let viewport = app.world().get::<Camera>(camera_id).unwrap().to_owned().viewport;
+            assert!(viewport.is_none());
 
-        // fn adjust_viewport(
-        //     mut boxed_cameras: Query<(&mut Camera, &CameraBox)>,
-        //     primary_window: Option<Single<Entity, With<PrimaryWindow>>>,
-        //     windows: Query<(Entity, &Window)>,
-        //     texture_views: Res<ManualTextureViews>,
-        //     images: Res<Assets<Image>>,
+            let (mut app, camera_id) = setup_app(CameraBox::StaticResolution { resolution: (640, 360).into(), position: Some((1, 0).into())}, (640., 360.).into());
+            app.update();
+            let viewport = app.world().get::<Camera>(camera_id).unwrap().to_owned().viewport.unwrap();
+            assert_eq!(viewport.physical_position, UVec2::new(1, 0));
+            assert_eq!(viewport.physical_size, UVec2::new(640, 360));
+
+            let (mut app, camera_id) = setup_app(CameraBox::StaticResolution { resolution: (640, 360).into(), position: None}, (1280., 720.).into());
+            app.update();
+            let viewport = app.world().get::<Camera>(camera_id).unwrap().to_owned().viewport.unwrap();
+            assert_eq!(viewport.physical_position, UVec2::new(320, 180));
+            assert_eq!(viewport.physical_size, UVec2::new(640, 360));
+            
+            let (mut app, camera_id) = setup_app(CameraBox::StaticResolution { resolution: (640, 360).into(), position: None}, (620., 180.).into());
+            app.update();
+            let viewport = app.world().get::<Camera>(camera_id).unwrap().to_owned().viewport.unwrap();
+            assert_eq!(viewport.physical_position, UVec2::new(0, 0));
+            assert_eq!(viewport.physical_size, UVec2::new(620, 180));
+        }
+        
+        #[test]
+        fn test_basic_aspect_ratio() -> Result<()>{
+            let output_resolution = (640., 360.);
+            let desired_aspect_ratio = AspectRatio::try_new(1280., 720.)?;
+            let (mut app, camera_id) = setup_app(CameraBox::StaticAspectRatio { aspect_ratio: desired_aspect_ratio, position: None }, output_resolution.into());
+            app.update();
+            let viewport = app.world().get::<Camera>(camera_id).unwrap().to_owned().viewport;
+            assert!(viewport.is_none());
+
+            let output_resolution = (1280., 720.);
+            let desired_aspect_ratio = AspectRatio::try_new(640., 480.)?;
+            let (mut app, camera_id) = setup_app(CameraBox::StaticAspectRatio { aspect_ratio: desired_aspect_ratio, position: None}, output_resolution.into());
+            app.update();
+            let viewport = app.world().get::<Camera>(camera_id).unwrap().to_owned().viewport.unwrap();
+            assert_eq!(viewport.physical_position, UVec2::new(160, 0));
+            assert_eq!(viewport.physical_size, UVec2::new(960, 720));
+
+            let output_resolution = (640., 360.);
+            let desired_aspect_ratio = AspectRatio::try_new(1280., 720.)?;
+            let (mut app, camera_id) = setup_app(CameraBox::StaticAspectRatio{ aspect_ratio: desired_aspect_ratio, position: Some((1, 0).into())}, output_resolution.into());
+            app.update();
+            let viewport = app.world().get::<Camera>(camera_id).unwrap().to_owned().viewport.unwrap();
+            assert_eq!(viewport.physical_position, UVec2::new(1, 0));
+            assert_eq!(viewport.physical_size, UVec2::new(640, 360));
+            
+            Ok(())
+        }
     }
 }
