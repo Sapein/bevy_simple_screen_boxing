@@ -176,7 +176,7 @@ fn adjust_viewport(
                     None => Viewport::default(),
                     Some(viewport) => viewport.to_owned(),
                 };
-                
+
                 if &target.physical_size == size && position.is_none() {
                     camera.viewport = None;
                     continue;
@@ -186,8 +186,7 @@ fn adjust_viewport(
                     viewport.physical_size = size.clamp(UVec2::ONE, target.physical_size);
                 }
 
-                viewport.physical_position = if position.is_none()
-                {
+                viewport.physical_position = if position.is_none() {
                     (target.physical_size - viewport.physical_size) / 2
                 } else {
                     position.unwrap()
@@ -321,8 +320,8 @@ fn adjust_viewport(
                 };
 
                 let Boxing {
-                    mut boxing_offset,
-                    mut output_resolution,
+                    boxing_offset,
+                    output_resolution,
                 } = calculate_pillarbox(&target.physical_size.as_vec2(), (left, right));
 
                 if output_resolution.x <= 0.
@@ -525,7 +524,7 @@ mod tests {
                 ),
                 Boxing::new(Vec2::ZERO, Vec2::new(640., 360.))
             );
-            
+
             assert_eq!(
                 calculate_boxing_from_aspect_ratios(
                     &Vec2::new(1280., 720.),
@@ -543,7 +542,7 @@ mod tests {
                 ),
                 Boxing::new(Vec2::ZERO, Vec2::new(1920., 1080.))
             );
-            
+
             assert_eq!(
                 calculate_boxing_from_aspect_ratios(
                     &Vec2::new(640., 480.),
@@ -552,7 +551,7 @@ mod tests {
                 ),
                 Boxing::new(Vec2::new(0., 60.), Vec2::new(640., 360.))
             );
-            
+
             assert_eq!(
                 calculate_boxing_from_aspect_ratios(
                     &Vec2::new(640., 360.),
@@ -561,7 +560,7 @@ mod tests {
                 ),
                 Boxing::new(Vec2::new(80., 0.), Vec2::new(480., 360.))
             );
-            
+
             assert_eq!(
                 calculate_boxing_from_aspect_ratios(
                     &Vec2::new(480., 640.),
@@ -570,7 +569,7 @@ mod tests {
                 ),
                 Boxing::new(Vec2::new(0., 185.), Vec2::new(480., 270.))
             );
-            
+
             assert_eq!(
                 calculate_boxing_from_aspect_ratios(
                     &Vec2::new(1280., 720.),
@@ -579,7 +578,7 @@ mod tests {
                 ),
                 Boxing::new(Vec2::new(370., 0.), Vec2::new(540., 720.))
             );
-            
+
             Ok(())
         }
 
@@ -635,7 +634,9 @@ mod tests {
                 calculate_boxing_imperfect(&Vec2::new(330., 190.), &Vec2::new(640., 360.))
                     .ok()
                     .flatten()
-                    .is_some_and(|u| u == Boxing::new(Vec2::new(0., 2.1875), Vec2::new(330., 185.625))),
+                    .is_some_and(
+                        |u| u == Boxing::new(Vec2::new(0., 2.1875), Vec2::new(330., 185.625))
+                    ),
                 "Testing against off downscaling failed! (360p -> (180p + 10))"
             );
 
@@ -782,7 +783,7 @@ mod tests {
             }
         }
     }
-    
+
     mod systems {
         use super::*;
         use bevy_asset::AssetId;
@@ -792,274 +793,677 @@ mod tests {
         const W360P: UVec2 = UVec2::new(640, 360);
         const W720P: UVec2 = UVec2::new(1280, 720);
         const W180P: UVec2 = UVec2::new(320, 180);
-        
-        
+
         fn setup_app(camerabox: CameraBox, window_resolution: WindowResolution) -> (App, Entity) {
             let mut app = App::new();
 
             app.init_resource::<ManualTextureViews>();
             app.init_resource::<Assets<Image>>();
-            app.world_mut().spawn(
-                (Window {
+            app.world_mut().spawn((
+                Window {
                     resolution: window_resolution,
                     ..Window::default()
-                }, PrimaryWindow)
-            );
-            let camera_id = app.world_mut().spawn( (
-                Camera {
-                    viewport: None,
-                    is_active: true,
-                    target: RenderTarget::Window(WindowRef::Primary),
-                    ..Camera::default()
                 },
-                camerabox
-            )).id();
+                PrimaryWindow,
+            ));
+            let camera_id = app
+                .world_mut()
+                .spawn((
+                    Camera {
+                        viewport: None,
+                        is_active: true,
+                        target: RenderTarget::Window(WindowRef::Primary),
+                        ..Camera::default()
+                    },
+                    camerabox,
+                ))
+                .id();
             app.add_systems(First, adjust_viewport);
             (app, camera_id)
         }
-        
+
         #[test]
         fn test_basic_pillarboxing() {
-            let (mut app, camera_id) = setup_app(CameraBox::PillarBox { left: 2, right: 2 }, W360P.as_vec2().into());
+            let (mut app, camera_id) = setup_app(
+                CameraBox::PillarBox { left: 2, right: 2 },
+                W360P.as_vec2().into(),
+            );
             app.update();
-            let viewport = app.world().get::<Camera>(camera_id).unwrap().to_owned().viewport.unwrap();
+            let viewport = app
+                .world()
+                .get::<Camera>(camera_id)
+                .unwrap()
+                .to_owned()
+                .viewport
+                .unwrap();
             assert_eq!(viewport.physical_position, UVec2::new(2, 0));
             assert_eq!(viewport.physical_size, UVec2::new(636, 360));
-            
-            let (mut app, camera_id) = setup_app(CameraBox::PillarBox { left: 5, right: 0 }, W360P.as_vec2().into());
+
+            let (mut app, camera_id) = setup_app(
+                CameraBox::PillarBox { left: 5, right: 0 },
+                W360P.as_vec2().into(),
+            );
             app.update();
-            let viewport = app.world().get::<Camera>(camera_id).unwrap().to_owned().viewport.unwrap();
+            let viewport = app
+                .world()
+                .get::<Camera>(camera_id)
+                .unwrap()
+                .to_owned()
+                .viewport
+                .unwrap();
             assert_eq!(viewport.physical_position, UVec2::new(5, 0));
             assert_eq!(viewport.physical_size, UVec2::new(635, 360));
-            
-            let (mut app, camera_id) = setup_app(CameraBox::PillarBox { left: 0, right: 5 }, W360P.as_vec2().into());
+
+            let (mut app, camera_id) = setup_app(
+                CameraBox::PillarBox { left: 0, right: 5 },
+                W360P.as_vec2().into(),
+            );
             app.update();
-            let viewport = app.world().get::<Camera>(camera_id).unwrap().to_owned().viewport.unwrap();
+            let viewport = app
+                .world()
+                .get::<Camera>(camera_id)
+                .unwrap()
+                .to_owned()
+                .viewport
+                .unwrap();
             assert_eq!(viewport.physical_position, UVec2::new(0, 0));
             assert_eq!(viewport.physical_size, UVec2::new(635, 360));
-            
-            let (mut app, camera_id) = setup_app(CameraBox::PillarBox { left: 5, right: 10 }, W360P.as_vec2().into());
+
+            let (mut app, camera_id) = setup_app(
+                CameraBox::PillarBox { left: 5, right: 10 },
+                W360P.as_vec2().into(),
+            );
             app.update();
-            let viewport = app.world().get::<Camera>(camera_id).unwrap().to_owned().viewport.unwrap();
+            let viewport = app
+                .world()
+                .get::<Camera>(camera_id)
+                .unwrap()
+                .to_owned()
+                .viewport
+                .unwrap();
             assert_eq!(viewport.physical_position, UVec2::new(5, 0));
             assert_eq!(viewport.physical_size, UVec2::new(625, 360));
-            
-            let (mut app, camera_id) = setup_app(CameraBox::PillarBox { left: 10, right: 5 }, W360P.as_vec2().into());
+
+            let (mut app, camera_id) = setup_app(
+                CameraBox::PillarBox { left: 10, right: 5 },
+                W360P.as_vec2().into(),
+            );
             app.update();
-            let viewport = app.world().get::<Camera>(camera_id).unwrap().to_owned().viewport.unwrap();
+            let viewport = app
+                .world()
+                .get::<Camera>(camera_id)
+                .unwrap()
+                .to_owned()
+                .viewport
+                .unwrap();
             assert_eq!(viewport.physical_position, UVec2::new(10, 0));
             assert_eq!(viewport.physical_size, UVec2::new(625, 360));
         }
-        
+
         #[test]
         fn test_basic_letterboxing() {
-            let (mut app, camera_id) = setup_app(CameraBox::LetterBox { top: 2, bottom: 2, strict_letterboxing: true }, W360P.as_vec2().into());
+            let (mut app, camera_id) = setup_app(
+                CameraBox::LetterBox {
+                    top: 2,
+                    bottom: 2,
+                    strict_letterboxing: true,
+                },
+                W360P.as_vec2().into(),
+            );
             app.update();
-            let viewport = app.world().get::<Camera>(camera_id).unwrap().to_owned().viewport.unwrap();
+            let viewport = app
+                .world()
+                .get::<Camera>(camera_id)
+                .unwrap()
+                .to_owned()
+                .viewport
+                .unwrap();
             assert_eq!(viewport.physical_position, UVec2::new(0, 2));
             assert_eq!(viewport.physical_size, UVec2::new(640, 356));
-            
-            let (mut app, camera_id) = setup_app(CameraBox::LetterBox { top: 5, bottom: 0, strict_letterboxing: true }, W360P.as_vec2().into());
+
+            let (mut app, camera_id) = setup_app(
+                CameraBox::LetterBox {
+                    top: 5,
+                    bottom: 0,
+                    strict_letterboxing: true,
+                },
+                W360P.as_vec2().into(),
+            );
             app.update();
-            let viewport = app.world().get::<Camera>(camera_id).unwrap().to_owned().viewport.unwrap();
+            let viewport = app
+                .world()
+                .get::<Camera>(camera_id)
+                .unwrap()
+                .to_owned()
+                .viewport
+                .unwrap();
             assert_eq!(viewport.physical_position, UVec2::new(0, 5));
             assert_eq!(viewport.physical_size, UVec2::new(640, 355));
-            
-            let (mut app, camera_id) = setup_app(CameraBox::LetterBox { top: 0, bottom: 5, strict_letterboxing: true }, W360P.as_vec2().into());
+
+            let (mut app, camera_id) = setup_app(
+                CameraBox::LetterBox {
+                    top: 0,
+                    bottom: 5,
+                    strict_letterboxing: true,
+                },
+                W360P.as_vec2().into(),
+            );
             app.update();
-            let viewport = app.world().get::<Camera>(camera_id).unwrap().to_owned().viewport.unwrap();
+            let viewport = app
+                .world()
+                .get::<Camera>(camera_id)
+                .unwrap()
+                .to_owned()
+                .viewport
+                .unwrap();
             assert_eq!(viewport.physical_position, UVec2::new(0, 0));
             assert_eq!(viewport.physical_size, UVec2::new(640, 355));
-            
-            let (mut app, camera_id) = setup_app(CameraBox::LetterBox { top: 10, bottom: 5, strict_letterboxing: true }, W360P.as_vec2().into());
+
+            let (mut app, camera_id) = setup_app(
+                CameraBox::LetterBox {
+                    top: 10,
+                    bottom: 5,
+                    strict_letterboxing: true,
+                },
+                W360P.as_vec2().into(),
+            );
             app.update();
-            let viewport = app.world().get::<Camera>(camera_id).unwrap().to_owned().viewport.unwrap();
+            let viewport = app
+                .world()
+                .get::<Camera>(camera_id)
+                .unwrap()
+                .to_owned()
+                .viewport
+                .unwrap();
             assert_eq!(viewport.physical_position, UVec2::new(0, 10));
             assert_eq!(viewport.physical_size, UVec2::new(640, 345));
-            
-            let (mut app, camera_id) = setup_app(CameraBox::LetterBox { top: 5, bottom: 10, strict_letterboxing: true }, W360P.as_vec2().into());
+
+            let (mut app, camera_id) = setup_app(
+                CameraBox::LetterBox {
+                    top: 5,
+                    bottom: 10,
+                    strict_letterboxing: true,
+                },
+                W360P.as_vec2().into(),
+            );
             app.update();
-            let viewport = app.world().get::<Camera>(camera_id).unwrap().to_owned().viewport.unwrap();
+            let viewport = app
+                .world()
+                .get::<Camera>(camera_id)
+                .unwrap()
+                .to_owned()
+                .viewport
+                .unwrap();
             assert_eq!(viewport.physical_position, UVec2::new(0, 5));
             assert_eq!(viewport.physical_size, UVec2::new(640, 345));
-            
-            let (mut app, camera_id) = setup_app(CameraBox::LetterBox { top: 360, bottom: 0, strict_letterboxing: true }, W360P.as_vec2().into());
+
+            let (mut app, camera_id) = setup_app(
+                CameraBox::LetterBox {
+                    top: 360,
+                    bottom: 0,
+                    strict_letterboxing: true,
+                },
+                W360P.as_vec2().into(),
+            );
             app.update();
-            let viewport = app.world().get::<Camera>(camera_id).unwrap().to_owned().viewport;
+            let viewport = app
+                .world()
+                .get::<Camera>(camera_id)
+                .unwrap()
+                .to_owned()
+                .viewport;
             assert!(viewport.is_none());
-            
-            let (mut app, camera_id) = setup_app(CameraBox::LetterBox { top: 2, bottom: 2, strict_letterboxing: false }, W360P.as_vec2().into());
+
+            let (mut app, camera_id) = setup_app(
+                CameraBox::LetterBox {
+                    top: 2,
+                    bottom: 2,
+                    strict_letterboxing: false,
+                },
+                W360P.as_vec2().into(),
+            );
             app.update();
-            let viewport = app.world().get::<Camera>(camera_id).unwrap().to_owned().viewport.unwrap();
+            let viewport = app
+                .world()
+                .get::<Camera>(camera_id)
+                .unwrap()
+                .to_owned()
+                .viewport
+                .unwrap();
             assert_eq!(viewport.physical_position, UVec2::new(0, 2));
             assert_eq!(viewport.physical_size, UVec2::new(640, 356));
 
-            let (mut app, camera_id) = setup_app(CameraBox::LetterBox { top: 5, bottom: 0, strict_letterboxing: false }, W360P.as_vec2().into());
+            let (mut app, camera_id) = setup_app(
+                CameraBox::LetterBox {
+                    top: 5,
+                    bottom: 0,
+                    strict_letterboxing: false,
+                },
+                W360P.as_vec2().into(),
+            );
             app.update();
-            let viewport = app.world().get::<Camera>(camera_id).unwrap().to_owned().viewport.unwrap();
+            let viewport = app
+                .world()
+                .get::<Camera>(camera_id)
+                .unwrap()
+                .to_owned()
+                .viewport
+                .unwrap();
             assert_eq!(viewport.physical_position, UVec2::new(0, 5));
             assert_eq!(viewport.physical_size, UVec2::new(640, 355));
 
-            let (mut app, camera_id) = setup_app(CameraBox::LetterBox { top: 0, bottom: 5, strict_letterboxing: false }, W360P.as_vec2().into());
+            let (mut app, camera_id) = setup_app(
+                CameraBox::LetterBox {
+                    top: 0,
+                    bottom: 5,
+                    strict_letterboxing: false,
+                },
+                W360P.as_vec2().into(),
+            );
             app.update();
-            let viewport = app.world().get::<Camera>(camera_id).unwrap().to_owned().viewport.unwrap();
+            let viewport = app
+                .world()
+                .get::<Camera>(camera_id)
+                .unwrap()
+                .to_owned()
+                .viewport
+                .unwrap();
             assert_eq!(viewport.physical_position, UVec2::new(0, 0));
             assert_eq!(viewport.physical_size, UVec2::new(640, 355));
 
-            let (mut app, camera_id) = setup_app(CameraBox::LetterBox { top: 10, bottom: 5, strict_letterboxing: false }, W360P.as_vec2().into());
+            let (mut app, camera_id) = setup_app(
+                CameraBox::LetterBox {
+                    top: 10,
+                    bottom: 5,
+                    strict_letterboxing: false,
+                },
+                W360P.as_vec2().into(),
+            );
             app.update();
-            let viewport = app.world().get::<Camera>(camera_id).unwrap().to_owned().viewport.unwrap();
+            let viewport = app
+                .world()
+                .get::<Camera>(camera_id)
+                .unwrap()
+                .to_owned()
+                .viewport
+                .unwrap();
             assert_eq!(viewport.physical_position, UVec2::new(0, 10));
             assert_eq!(viewport.physical_size, UVec2::new(640, 345));
 
-            let (mut app, camera_id) = setup_app(CameraBox::LetterBox { top: 5, bottom: 10, strict_letterboxing: false }, W360P.as_vec2().into());
+            let (mut app, camera_id) = setup_app(
+                CameraBox::LetterBox {
+                    top: 5,
+                    bottom: 10,
+                    strict_letterboxing: false,
+                },
+                W360P.as_vec2().into(),
+            );
             app.update();
-            let viewport = app.world().get::<Camera>(camera_id).unwrap().to_owned().viewport.unwrap();
+            let viewport = app
+                .world()
+                .get::<Camera>(camera_id)
+                .unwrap()
+                .to_owned()
+                .viewport
+                .unwrap();
             assert_eq!(viewport.physical_position, UVec2::new(0, 5));
             assert_eq!(viewport.physical_size, UVec2::new(640, 345));
 
-            let (mut app, camera_id) = setup_app(CameraBox::LetterBox { top: 360, bottom: 0, strict_letterboxing: false }, W360P.as_vec2().into());
+            let (mut app, camera_id) = setup_app(
+                CameraBox::LetterBox {
+                    top: 360,
+                    bottom: 0,
+                    strict_letterboxing: false,
+                },
+                W360P.as_vec2().into(),
+            );
             app.update();
-            let viewport = app.world().get::<Camera>(camera_id).unwrap().to_owned().viewport.unwrap();
+            let viewport = app
+                .world()
+                .get::<Camera>(camera_id)
+                .unwrap()
+                .to_owned()
+                .viewport
+                .unwrap();
             assert_eq!(viewport.physical_position, UVec2::new(0, 180));
             assert_eq!(viewport.physical_size, UVec2::new(640, 180));
         }
-        
+
         #[test]
         fn test_basic_resolution() {
-            let (mut app, camera_id) = setup_app(CameraBox::StaticResolution { resolution: W360P.into(), position: None}, W360P.as_vec2().into());
+            let (mut app, camera_id) = setup_app(
+                CameraBox::StaticResolution {
+                    resolution: W360P.into(),
+                    position: None,
+                },
+                W360P.as_vec2().into(),
+            );
             app.update();
-            let viewport = app.world().get::<Camera>(camera_id).unwrap().to_owned().viewport;
+            let viewport = app
+                .world()
+                .get::<Camera>(camera_id)
+                .unwrap()
+                .to_owned()
+                .viewport;
             assert!(viewport.is_none());
 
-            let (mut app, camera_id) = setup_app(CameraBox::StaticResolution { resolution: W360P.into(), position: Some((1, 0).into())}, W360P.as_vec2().into());
+            let (mut app, camera_id) = setup_app(
+                CameraBox::StaticResolution {
+                    resolution: W360P.into(),
+                    position: Some((1, 0).into()),
+                },
+                W360P.as_vec2().into(),
+            );
             app.update();
-            let viewport = app.world().get::<Camera>(camera_id).unwrap().to_owned().viewport.unwrap();
+            let viewport = app
+                .world()
+                .get::<Camera>(camera_id)
+                .unwrap()
+                .to_owned()
+                .viewport
+                .unwrap();
             assert_eq!(viewport.physical_position, UVec2::new(1, 0));
             assert_eq!(viewport.physical_size, W360P);
 
-            let (mut app, camera_id) = setup_app(CameraBox::StaticResolution { resolution: W360P.into(), position: None}, W720P.as_vec2().into());
+            let (mut app, camera_id) = setup_app(
+                CameraBox::StaticResolution {
+                    resolution: W360P.into(),
+                    position: None,
+                },
+                W720P.as_vec2().into(),
+            );
             app.update();
-            let viewport = app.world().get::<Camera>(camera_id).unwrap().to_owned().viewport.unwrap();
+            let viewport = app
+                .world()
+                .get::<Camera>(camera_id)
+                .unwrap()
+                .to_owned()
+                .viewport
+                .unwrap();
             assert_eq!(viewport.physical_position, UVec2::new(320, 180));
             assert_eq!(viewport.physical_size, W360P);
-            
-            let (mut app, camera_id) = setup_app(CameraBox::StaticResolution { resolution: W360P.into(), position: None}, W180P.as_vec2().into());
+
+            let (mut app, camera_id) = setup_app(
+                CameraBox::StaticResolution {
+                    resolution: W360P.into(),
+                    position: None,
+                },
+                W180P.as_vec2().into(),
+            );
             app.update();
-            let viewport = app.world().get::<Camera>(camera_id).unwrap().to_owned().viewport.unwrap();
+            let viewport = app
+                .world()
+                .get::<Camera>(camera_id)
+                .unwrap()
+                .to_owned()
+                .viewport
+                .unwrap();
             assert_eq!(viewport.physical_position, UVec2::new(0, 0));
             assert_eq!(viewport.physical_size, W180P);
         }
-        
+
         #[test]
-        fn test_basic_aspect_ratio() -> Result<()>{
+        fn test_basic_aspect_ratio() -> Result<()> {
             let desired_aspect_ratio = AspectRatio::try_from(W720P.as_vec2())?;
-            let (mut app, camera_id) = setup_app(CameraBox::StaticAspectRatio { aspect_ratio: desired_aspect_ratio, position: None }, W360P.as_vec2().into());
+            let (mut app, camera_id) = setup_app(
+                CameraBox::StaticAspectRatio {
+                    aspect_ratio: desired_aspect_ratio,
+                    position: None,
+                },
+                W360P.as_vec2().into(),
+            );
             app.update();
-            let viewport = app.world().get::<Camera>(camera_id).unwrap().to_owned().viewport;
+            let viewport = app
+                .world()
+                .get::<Camera>(camera_id)
+                .unwrap()
+                .to_owned()
+                .viewport;
             assert!(viewport.is_none());
 
             let desired_aspect_ratio = AspectRatio::try_new(640., 480.)?;
-            let (mut app, camera_id) = setup_app(CameraBox::StaticAspectRatio { aspect_ratio: desired_aspect_ratio, position: None}, W720P.as_vec2().into());
+            let (mut app, camera_id) = setup_app(
+                CameraBox::StaticAspectRatio {
+                    aspect_ratio: desired_aspect_ratio,
+                    position: None,
+                },
+                W720P.as_vec2().into(),
+            );
             app.update();
-            let viewport = app.world().get::<Camera>(camera_id).unwrap().to_owned().viewport.unwrap();
+            let viewport = app
+                .world()
+                .get::<Camera>(camera_id)
+                .unwrap()
+                .to_owned()
+                .viewport
+                .unwrap();
             assert_eq!(viewport.physical_position, UVec2::new(160, 0));
             assert_eq!(viewport.physical_size, UVec2::new(960, 720));
 
             let desired_aspect_ratio = AspectRatio::try_from(W720P.as_vec2())?;
-            let (mut app, camera_id) = setup_app(CameraBox::StaticAspectRatio{ aspect_ratio: desired_aspect_ratio, position: Some((1, 0).into())}, W360P.as_vec2().into());
+            let (mut app, camera_id) = setup_app(
+                CameraBox::StaticAspectRatio {
+                    aspect_ratio: desired_aspect_ratio,
+                    position: Some((1, 0).into()),
+                },
+                W360P.as_vec2().into(),
+            );
             app.update();
-            let viewport = app.world().get::<Camera>(camera_id).unwrap().to_owned().viewport.unwrap();
+            let viewport = app
+                .world()
+                .get::<Camera>(camera_id)
+                .unwrap()
+                .to_owned()
+                .viewport
+                .unwrap();
             assert_eq!(viewport.physical_position, UVec2::new(1, 0));
             assert_eq!(viewport.physical_size, W360P);
-            
+
             Ok(())
         }
-        
+
         #[test]
-        fn test_basic_integer_scaling_imperfect(){
-            let (mut app, camera_id) = setup_app(CameraBox::ResolutionIntegerScale { resolution: W360P.as_vec2().into() , allow_imperfect_aspect_ratios: true }, W360P.as_vec2().into());
+        fn test_basic_integer_scaling_imperfect() {
+            let (mut app, camera_id) = setup_app(
+                CameraBox::ResolutionIntegerScale {
+                    resolution: W360P.as_vec2().into(),
+                    allow_imperfect_aspect_ratios: true,
+                },
+                W360P.as_vec2().into(),
+            );
             app.update();
-            let viewport = app.world().get::<Camera>(camera_id).unwrap().to_owned().viewport;
+            let viewport = app
+                .world()
+                .get::<Camera>(camera_id)
+                .unwrap()
+                .to_owned()
+                .viewport;
             assert!(viewport.is_none());
 
-            let (mut app, camera_id) = setup_app(CameraBox::ResolutionIntegerScale { resolution: (640., 480.).into(), allow_imperfect_aspect_ratios: true}, W720P.as_vec2().into());
+            let (mut app, camera_id) = setup_app(
+                CameraBox::ResolutionIntegerScale {
+                    resolution: (640., 480.).into(),
+                    allow_imperfect_aspect_ratios: true,
+                },
+                W720P.as_vec2().into(),
+            );
             app.update();
-            let viewport = app.world().get::<Camera>(camera_id).unwrap().to_owned().viewport.unwrap();
+            let viewport = app
+                .world()
+                .get::<Camera>(camera_id)
+                .unwrap()
+                .to_owned()
+                .viewport
+                .unwrap();
             assert_eq!(viewport.physical_position, UVec2::new(320, 120));
             assert_eq!(viewport.physical_size, UVec2::new(640, 480));
 
-            let (mut app, camera_id) = setup_app(CameraBox::ResolutionIntegerScale{ resolution: W360P.as_vec2(), allow_imperfect_aspect_ratios: true }, W720P.as_vec2().into());
+            let (mut app, camera_id) = setup_app(
+                CameraBox::ResolutionIntegerScale {
+                    resolution: W360P.as_vec2(),
+                    allow_imperfect_aspect_ratios: true,
+                },
+                W720P.as_vec2().into(),
+            );
             app.update();
-            let viewport = app.world().get::<Camera>(camera_id).unwrap().to_owned().viewport;
+            let viewport = app
+                .world()
+                .get::<Camera>(camera_id)
+                .unwrap()
+                .to_owned()
+                .viewport;
             assert!(viewport.is_none());
-            
-            let (mut app, camera_id) = setup_app(CameraBox::ResolutionIntegerScale { resolution: W360P.as_vec2().into(), allow_imperfect_aspect_ratios: true}, W180P.as_vec2().into());
+
+            let (mut app, camera_id) = setup_app(
+                CameraBox::ResolutionIntegerScale {
+                    resolution: W360P.as_vec2().into(),
+                    allow_imperfect_aspect_ratios: true,
+                },
+                W180P.as_vec2().into(),
+            );
             app.update();
-            let viewport = app.world().get::<Camera>(camera_id).unwrap().to_owned().viewport;
+            let viewport = app
+                .world()
+                .get::<Camera>(camera_id)
+                .unwrap()
+                .to_owned()
+                .viewport;
             assert!(viewport.is_none());
-            
-            let (mut app, camera_id) = setup_app(CameraBox::ResolutionIntegerScale { resolution: W360P.as_vec2().into(), allow_imperfect_aspect_ratios: true}, (W180P + 10).as_vec2().into());
+
+            let (mut app, camera_id) = setup_app(
+                CameraBox::ResolutionIntegerScale {
+                    resolution: W360P.as_vec2().into(),
+                    allow_imperfect_aspect_ratios: true,
+                },
+                (W180P + 10).as_vec2().into(),
+            );
             app.update();
-            let viewport = app.world().get::<Camera>(camera_id).unwrap().to_owned().viewport.unwrap();
+            let viewport = app
+                .world()
+                .get::<Camera>(camera_id)
+                .unwrap()
+                .to_owned()
+                .viewport
+                .unwrap();
             assert_eq!(viewport.physical_position, UVec2::new(0, 2));
             assert_eq!(viewport.physical_size, UVec2::new(330, 185));
         }
-        
+
         #[test]
-        fn test_basic_integer_scaling_perfect(){
-            let (mut app, camera_id) = setup_app(CameraBox::ResolutionIntegerScale { resolution: W360P.as_vec2().into() , allow_imperfect_aspect_ratios: false }, W360P.as_vec2().into());
+        fn test_basic_integer_scaling_perfect() {
+            let (mut app, camera_id) = setup_app(
+                CameraBox::ResolutionIntegerScale {
+                    resolution: W360P.as_vec2().into(),
+                    allow_imperfect_aspect_ratios: false,
+                },
+                W360P.as_vec2().into(),
+            );
             app.update();
-            let viewport = app.world().get::<Camera>(camera_id).unwrap().to_owned().viewport;
+            let viewport = app
+                .world()
+                .get::<Camera>(camera_id)
+                .unwrap()
+                .to_owned()
+                .viewport;
             assert!(viewport.is_none());
 
-            let (mut app, camera_id) = setup_app(CameraBox::ResolutionIntegerScale { resolution: (640., 480.).into(), allow_imperfect_aspect_ratios: false}, W720P.as_vec2().into());
+            let (mut app, camera_id) = setup_app(
+                CameraBox::ResolutionIntegerScale {
+                    resolution: (640., 480.).into(),
+                    allow_imperfect_aspect_ratios: false,
+                },
+                W720P.as_vec2().into(),
+            );
             app.update();
-            let viewport = app.world().get::<Camera>(camera_id).unwrap().to_owned().viewport.unwrap();
+            let viewport = app
+                .world()
+                .get::<Camera>(camera_id)
+                .unwrap()
+                .to_owned()
+                .viewport
+                .unwrap();
             assert_eq!(viewport.physical_position, UVec2::new(320, 120));
             assert_eq!(viewport.physical_size, UVec2::new(640, 480));
 
-            let (mut app, camera_id) = setup_app(CameraBox::ResolutionIntegerScale{ resolution: W360P.as_vec2(), allow_imperfect_aspect_ratios: false }, W720P.as_vec2().into());
+            let (mut app, camera_id) = setup_app(
+                CameraBox::ResolutionIntegerScale {
+                    resolution: W360P.as_vec2(),
+                    allow_imperfect_aspect_ratios: false,
+                },
+                W720P.as_vec2().into(),
+            );
             app.update();
-            let viewport = app.world().get::<Camera>(camera_id).unwrap().to_owned().viewport;
+            let viewport = app
+                .world()
+                .get::<Camera>(camera_id)
+                .unwrap()
+                .to_owned()
+                .viewport;
             assert!(viewport.is_none());
 
-            let (mut app, camera_id) = setup_app(CameraBox::ResolutionIntegerScale { resolution: W360P.as_vec2().into(), allow_imperfect_aspect_ratios: false}, W180P.as_vec2().into());
+            let (mut app, camera_id) = setup_app(
+                CameraBox::ResolutionIntegerScale {
+                    resolution: W360P.as_vec2().into(),
+                    allow_imperfect_aspect_ratios: false,
+                },
+                W180P.as_vec2().into(),
+            );
             app.update();
-            let viewport = app.world().get::<Camera>(camera_id).unwrap().to_owned().viewport;
+            let viewport = app
+                .world()
+                .get::<Camera>(camera_id)
+                .unwrap()
+                .to_owned()
+                .viewport;
             assert!(viewport.is_none());
-            
-            let (mut app, camera_id) = setup_app(CameraBox::ResolutionIntegerScale { resolution: W360P.as_vec2().into(), allow_imperfect_aspect_ratios: false}, (W180P + 10).as_vec2().into());
+
+            let (mut app, camera_id) = setup_app(
+                CameraBox::ResolutionIntegerScale {
+                    resolution: W360P.as_vec2().into(),
+                    allow_imperfect_aspect_ratios: false,
+                },
+                (W180P + 10).as_vec2().into(),
+            );
             app.update();
-            let viewport = app.world().get::<Camera>(camera_id).unwrap().to_owned().viewport.unwrap();
+            let viewport = app
+                .world()
+                .get::<Camera>(camera_id)
+                .unwrap()
+                .to_owned()
+                .viewport
+                .unwrap();
             assert_eq!(viewport.physical_position, UVec2::new(5, 5));
             assert_eq!(viewport.physical_size, UVec2::new(320, 180));
         }
-        
+
         #[test]
         fn test_camera_changed_detection() {
             let mut app = App::new();
 
             app.init_resource::<ManualTextureViews>();
             app.init_resource::<Assets<Image>>();
-            app.world_mut().spawn(
-                (Window {
+            app.world_mut().spawn((
+                Window {
                     resolution: W360P.as_vec2().into(),
                     ..Window::default()
-                }, PrimaryWindow)
-            );
-            let camera_id = app.world_mut().spawn( (
-                Camera {
-                    viewport: None,
-                    is_active: true,
-                    target: RenderTarget::Window(WindowRef::Primary),
-                    ..Camera::default()
                 },
-                CameraBox::StaticResolution {
-                    resolution: W360P,
-                    position: None,
-                }
-            )).id();
+                PrimaryWindow,
+            ));
+            let camera_id = app
+                .world_mut()
+                .spawn((
+                    Camera {
+                        viewport: None,
+                        is_active: true,
+                        target: RenderTarget::Window(WindowRef::Primary),
+                        ..Camera::default()
+                    },
+                    CameraBox::StaticResolution {
+                        resolution: W360P,
+                        position: None,
+                    },
+                ))
+                .id();
             app.add_systems(First, camerabox_changed);
             app.add_event::<AdjustBoxing>();
             app.update();
@@ -1069,39 +1473,47 @@ mod tests {
             let adjust_boxing_events = app.world().resource::<Events<AdjustBoxing>>();
             let mut adjust_boxing_reader = adjust_boxing_events.get_cursor();
             let boxing_adjust = adjust_boxing_reader.read(adjust_boxing_events).next();
-            
+
             assert!(boxing_adjust.is_some())
         }
-        
+
         #[test]
         fn test_camerabox_changed_detection() {
             let mut app = App::new();
 
             app.init_resource::<ManualTextureViews>();
             app.init_resource::<Assets<Image>>();
-            app.world_mut().spawn(
-                (Window {
+            app.world_mut().spawn((
+                Window {
                     resolution: W360P.as_vec2().into(),
                     ..Window::default()
-                }, PrimaryWindow)
-            );
-            let camera_id = app.world_mut().spawn( (
-                Camera {
-                    viewport: None,
-                    is_active: true,
-                    target: RenderTarget::Window(WindowRef::Primary),
-                    ..Camera::default()
                 },
-                CameraBox::StaticResolution {
-                    resolution: W360P,
-                    position: None,
-                }
-            )).id();
+                PrimaryWindow,
+            ));
+            let camera_id = app
+                .world_mut()
+                .spawn((
+                    Camera {
+                        viewport: None,
+                        is_active: true,
+                        target: RenderTarget::Window(WindowRef::Primary),
+                        ..Camera::default()
+                    },
+                    CameraBox::StaticResolution {
+                        resolution: W360P,
+                        position: None,
+                    },
+                ))
+                .id();
             app.add_systems(First, camerabox_changed);
             app.add_event::<AdjustBoxing>();
             app.update();
             let mut camera_box = app.world_mut().get_mut::<CameraBox>(camera_id).unwrap();
-            *camera_box = CameraBox::LetterBox { top: 10, bottom: 10, strict_letterboxing: true };
+            *camera_box = CameraBox::LetterBox {
+                top: 10,
+                bottom: 10,
+                strict_letterboxing: true,
+            };
             app.update();
             let adjust_boxing_events = app.world().resource::<Events<AdjustBoxing>>();
             let mut adjust_boxing_reader = adjust_boxing_events.get_cursor();
@@ -1109,20 +1521,24 @@ mod tests {
 
             assert!(boxing_adjust.is_some())
         }
-        
+
         #[test]
         fn test_window_changed_detection() {
             let mut app = App::new();
 
             app.init_resource::<ManualTextureViews>();
             app.init_resource::<Assets<Image>>();
-            let window_id = app.world_mut().spawn(
-                (Window {
-                    resolution: W360P.as_vec2().into(),
-                    ..Window::default()
-                }, PrimaryWindow)
-            ).id();
-            app.world_mut().spawn( (
+            let window_id = app
+                .world_mut()
+                .spawn((
+                    Window {
+                        resolution: W360P.as_vec2().into(),
+                        ..Window::default()
+                    },
+                    PrimaryWindow,
+                ))
+                .id();
+            app.world_mut().spawn((
                 Camera {
                     viewport: None,
                     is_active: true,
@@ -1132,7 +1548,7 @@ mod tests {
                 CameraBox::StaticResolution {
                     resolution: W360P,
                     position: None,
-                }
+                },
             ));
             app.add_systems(First, windows_changed);
             app.add_event::<AdjustBoxing>();
@@ -1155,8 +1571,12 @@ mod tests {
             app.init_resource::<Assets<Image>>();
             app.add_event::<AssetEvent<Image>>();
             app.add_event::<AdjustBoxing>();
-            app.add_systems(First, images_changed
-                .run_if(resource_changed_or_removed::<Assets<Image>>.or(on_event::<AssetEvent<Image>>)));
+            app.add_systems(
+                First,
+                images_changed.run_if(
+                    resource_changed_or_removed::<Assets<Image>>.or(on_event::<AssetEvent<Image>>),
+                ),
+            );
             app.update();
 
             let mut images = app.world_mut().resource_mut::<Assets<Image>>();
@@ -1166,7 +1586,7 @@ mod tests {
             let mut adjust_boxing_reader = adjust_boxing_events.get_cursor();
             let boxing_adjust = adjust_boxing_reader.read(adjust_boxing_events).next();
             assert!(boxing_adjust.is_some());
-            
+
             let event = AssetEvent::Modified {
                 id: AssetId::default(),
             };
@@ -1176,34 +1596,37 @@ mod tests {
             let mut adjust_boxing_reader = adjust_boxing_events.get_cursor();
             let boxing_adjust = adjust_boxing_reader.read(adjust_boxing_events).next();
             assert!(boxing_adjust.is_some());
-            
+
             app.update();
-            
+
             let adjust_boxing_events = app.world().resource::<Events<AdjustBoxing>>();
             let mut adjust_boxing_reader = adjust_boxing_events.get_cursor();
             let boxing_adjust = adjust_boxing_reader.read(adjust_boxing_events).next();
             assert!(boxing_adjust.is_none());
         }
-        
+
         #[test]
         fn test_textureviews_changed_detection() {
             let mut app = App::new();
-            
+
             app.init_resource::<ManualTextureViews>();
             app.init_resource::<Assets<Image>>();
             app.add_event::<AdjustBoxing>();
             app.update();
-            app.add_systems(First, texture_views_changed.run_if(resource_changed_or_removed::<ManualTextureViews>));
-            
+            app.add_systems(
+                First,
+                texture_views_changed.run_if(resource_changed_or_removed::<ManualTextureViews>),
+            );
+
             // While this doesn't actually change anything it *does* work by forcing the Bevy
             // to detect a change, even though we don't do anything, since Bevy has to assume that
             // any mutable access might've changed something, it seems.
-            let texture_views = app.world_mut().resource_mut::<ManualTextureViews>();
+            let _ = app.world_mut().resource_mut::<ManualTextureViews>();
             app.update();
             let adjust_boxing_events = app.world().resource::<Events<AdjustBoxing>>();
             let mut adjust_boxing_reader = adjust_boxing_events.get_cursor();
             let boxing_adjust = adjust_boxing_reader.read(adjust_boxing_events).next();
-            
+
             assert!(boxing_adjust.is_some());
         }
     }
