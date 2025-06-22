@@ -176,6 +176,11 @@ fn adjust_viewport(
                     None => Viewport::default(),
                     Some(viewport) => viewport.to_owned(),
                 };
+                
+                if &target.physical_size == size && position.is_none() {
+                    camera.viewport = None;
+                    continue;
+                }
 
                 if &viewport.physical_size != size {
                     viewport.physical_size = size.clamp(UVec2::ONE, target.physical_size);
@@ -184,7 +189,8 @@ fn adjust_viewport(
                 viewport.physical_position = if position
                     .is_none_or(|u| u != viewport.physical_position)
                 {
-                    (target.physical_size - viewport.physical_size / 2).min(target.physical_size)
+                    let placement = (target.physical_size - viewport.physical_size) / 2;
+                    placement
                 } else {
                     position.unwrap()
                 };
@@ -773,5 +779,85 @@ mod tests {
                 );
             }
         }
+    }
+    
+    mod systems {
+        use bevy_render::camera::RenderTarget;
+        use bevy_window::{WindowRef, WindowResolution};
+        use super::*;
+        
+        fn setup_app(camerabox: CameraBox, window_resolution: WindowResolution) -> (App, Entity) {
+            let mut app = App::new();
+
+            app.init_resource::<ManualTextureViews>();
+            app.init_resource::<Assets<Image>>();
+            app.world_mut().spawn(
+                (Window {
+                    resolution: window_resolution,
+                    ..Window::default()
+                }, PrimaryWindow)
+            );
+            let camera_id = app.world_mut().spawn( (
+                Camera {
+                    viewport: None,
+                    is_active: true,
+                    target: RenderTarget::Window(WindowRef::Primary),
+                    ..Camera::default()
+                },
+                camerabox
+            )).id();
+            app.add_systems(First, adjust_viewport);
+            (app, camera_id)
+        }
+        
+        #[test]
+        fn test_basic_pillarboxing() {
+            let (mut app, camera_id) = setup_app(CameraBox::PillarBox { left: 2, right: 2 }, (640., 360.).into());
+            app.update();
+            let viewport = app.world().get::<Camera>(camera_id).unwrap().to_owned().viewport.unwrap();
+            assert_eq!(viewport.physical_position, UVec2::new(2, 0));
+            assert_eq!(viewport.physical_size, UVec2::new(636, 360));
+        }
+        
+        #[test]
+        fn test_basic_letterboxing() {
+            let (mut app, camera_id) = setup_app(CameraBox::LetterBox { top: 2, bottom: 2, strict_letterboxing: true }, (640., 360.).into());
+            app.update();
+            let viewport = app.world().get::<Camera>(camera_id).unwrap().to_owned().viewport.unwrap();
+            assert_eq!(viewport.physical_position, UVec2::new(0, 2));
+            assert_eq!(viewport.physical_size, UVec2::new(640, 356));
+            
+        }
+        
+        #[test]
+        fn test_basic_resolution() {
+            {
+                let (mut app, camera_id) = setup_app(CameraBox::StaticResolution { resolution: (640, 360).into(), position: None}, (640., 360.).into());
+                app.update();
+                let viewport = app.world().get::<Camera>(camera_id).unwrap().to_owned().viewport;
+                assert!(viewport.is_none());
+            }
+            {
+                let (mut app, camera_id) = setup_app(CameraBox::StaticResolution { resolution: (640, 360).into(), position: None}, (1280., 720.).into());
+                app.update();
+                let viewport = app.world().get::<Camera>(camera_id).unwrap().to_owned().viewport.unwrap();
+                assert_eq!(viewport.physical_position, UVec2::new(320, 180));
+                assert_eq!(viewport.physical_size, UVec2::new(640, 360));
+            }
+            {
+                let (mut app, camera_id) = setup_app(CameraBox::StaticResolution { resolution: (640, 360).into(), position: None}, (620., 180.).into());
+                app.update();
+                let viewport = app.world().get::<Camera>(camera_id).unwrap().to_owned().viewport.unwrap();
+                assert_eq!(viewport.physical_position, UVec2::new(0, 0));
+                assert_eq!(viewport.physical_size, UVec2::new(620, 180));
+            }
+        }
+
+        // fn adjust_viewport(
+        //     mut boxed_cameras: Query<(&mut Camera, &CameraBox)>,
+        //     primary_window: Option<Single<Entity, With<PrimaryWindow>>>,
+        //     windows: Query<(Entity, &Window)>,
+        //     texture_views: Res<ManualTextureViews>,
+        //     images: Res<Assets<Image>>,
     }
 }
