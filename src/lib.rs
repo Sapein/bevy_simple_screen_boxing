@@ -63,7 +63,7 @@ pub enum CameraBox {
         position: Option<UVec2>,
     },
 
-    /// Keep the output as a static Aspect Ratio. If the output is not at the Aspect Ratio apply 
+    /// Keep the output as a static Aspect Ratio. If the output is not at the Aspect Ratio apply
     /// boxing to force it into the correct Aspect Ratio.
     StaticAspectRatio {
         aspect_ratio: AspectRatio,
@@ -80,11 +80,11 @@ pub enum CameraBox {
         /// If this is true, then the output may not be *exactly* the proper Aspect Ratio if the
         /// output resolution is smaller than the resolution specified, this will result in only
         /// letterboxing or pillarboxing, but not windowboxing.
-        /// 
+        ///
         /// If this is false, then we will use a second method which will ensure that the Aspect
         /// Ratio for the smaller output *will* be as exact as we can get it, and will ensure that
-        /// the output would be windowboxed properly. 
-        /// 
+        /// the output would be windowboxed properly.
+        ///
         /// If the output resolution is expected to larger than, or equal to, the resolution
         /// specified then this does not matter.
         allow_imperfect_aspect_ratios: bool,
@@ -244,9 +244,9 @@ fn adjust_viewport(
                     boxing_offset,
                     output_resolution,
                 } = match if *allow_imperfect_aspect_ratios {
-                    calculate_sizes_imperfect(&target.physical_size.as_vec2(), resolution)
+                    calculate_boxing_imperfect(&target.physical_size.as_vec2(), resolution)
                 } else {
-                    calculate_sizes_perfect(&target.physical_size.as_vec2(), resolution)
+                    calculate_boxing_perfect(&target.physical_size.as_vec2(), resolution)
                 } {
                     Ok(None) => {
                         camera.viewport = None;
@@ -360,7 +360,7 @@ fn calculate_boxing_from_aspect_ratios(
         }
     }
 }
-fn calculate_sizes_imperfect(physical_size: &Vec2, desired_size: &Vec2) -> Result<Option<Boxing>> {
+fn calculate_boxing_imperfect(physical_size: &Vec2, desired_size: &Vec2) -> Result<Option<Boxing>> {
     let desired_aspect_ratio = AspectRatio::try_from(*desired_size)?;
     let physical_aspect_ratio = AspectRatio::try_from(*physical_size)?;
 
@@ -406,7 +406,7 @@ fn calculate_sizes_imperfect(physical_size: &Vec2, desired_size: &Vec2) -> Resul
         output_resolution: Vec2::new(render_width, render_height),
     }))
 }
-fn calculate_sizes_perfect(physical_size: &Vec2, desired_size: &Vec2) -> Result<Option<Boxing>> {
+fn calculate_boxing_perfect(physical_size: &Vec2, desired_size: &Vec2) -> Result<Option<Boxing>> {
     let desired_aspect_ratio = AspectRatio::try_from(*desired_size)?;
     let physical_aspect_ratio = AspectRatio::try_from(*physical_size)?;
 
@@ -424,6 +424,15 @@ fn calculate_sizes_perfect(physical_size: &Vec2, desired_size: &Vec2) -> Result<
     if height_scale < 1. || width_scale < 1. {
         let height_scale = desired_size.y / physical_size.y;
         let width_scale = desired_size.x / physical_size.x;
+
+        // Recheck with the current values
+        let has_int_scale = desired_aspect_ratio.ratio() == physical_aspect_ratio.ratio()
+            && (height_scale % 1. == 0. && width_scale % 1. == 0.);
+
+        // Integer Scaling Exists
+        if has_int_scale {
+            return Ok(None);
+        }
 
         let best_divisor = if height_scale < width_scale {
             width_scale
@@ -446,7 +455,8 @@ fn calculate_sizes_perfect(physical_size: &Vec2, desired_size: &Vec2) -> Result<
             height_scale
         } else {
             width_scale
-        }.floor();
+        }
+        .floor();
 
         let render_width = desired_size.x * best_scale;
         let render_height = desired_size.y * best_scale;
@@ -485,7 +495,6 @@ fn calculate_pillarbox(physical_size: &Vec2, pillarbox: (&u32, &u32)) -> Boxing 
 #[cfg(test)]
 mod tests {
     use super::*;
-
     impl Boxing {
         fn new(boxing_offset: Vec2, output_resolution: Vec2) -> Self {
             Boxing {
@@ -495,44 +504,274 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_calculate_letterbox() {
-        let inputs: [(u32, u32); 6] =
-            [(100, 100), (100, 0), (100, 50), (50, 100), (0, 0), (0, 100)];
-        let physical_size = Vec2::new(640., 360.);
-        let outputs: [_; 6] = [
-            Boxing::new(Vec2::new(0., 100.), Vec2::new(640., 160.)),
-            Boxing::new(Vec2::new(0., 100.), Vec2::new(640., 260.)),
-            Boxing::new(Vec2::new(0., 100.), Vec2::new(640., 210.)),
-            Boxing::new(Vec2::new(0., 50.), Vec2::new(640., 210.)),
-            Boxing::new(Vec2::new(0., 0.), Vec2::new(640., 360.)),
-            Boxing::new(Vec2::new(0., 0.), Vec2::new(640., 260.)),
-        ];
-        for (i, input) in inputs.iter().enumerate() {
+    mod internal {
+        use super::*;
+
+        #[test]
+        fn test_aspect_ratio_scaling() -> Result<()> {
             assert_eq!(
-                calculate_letterbox(&physical_size, (&input.0, &input.1)),
-                outputs[i]
+                calculate_boxing_from_aspect_ratios(
+                    &Vec2::new(640., 360.),
+                    &AspectRatio::try_new(640., 360.)?,
+                    &AspectRatio::try_new(640., 360.)?
+                ),
+                Boxing::new(Vec2::ZERO, Vec2::new(640., 360.))
+            );
+            
+            assert_eq!(
+                calculate_boxing_from_aspect_ratios(
+                    &Vec2::new(1280., 720.),
+                    &AspectRatio::try_new(1280., 720.)?,
+                    &AspectRatio::try_new(640., 360.)?
+                ),
+                Boxing::new(Vec2::ZERO, Vec2::new(1280., 720.))
+            );
+
+            assert_eq!(
+                calculate_boxing_from_aspect_ratios(
+                    &Vec2::new(1920., 1080.),
+                    &AspectRatio::try_new(1920., 1080.)?,
+                    &AspectRatio::try_new(1280., 720.)?
+                ),
+                Boxing::new(Vec2::ZERO, Vec2::new(1920., 1080.))
+            );
+            
+            assert_eq!(
+                calculate_boxing_from_aspect_ratios(
+                    &Vec2::new(640., 480.),
+                    &AspectRatio::try_new(640., 480.)?,
+                    &AspectRatio::try_new(640., 360.)?
+                ),
+                Boxing::new(Vec2::new(0., 60.), Vec2::new(640., 360.))
+            );
+            
+            assert_eq!(
+                calculate_boxing_from_aspect_ratios(
+                    &Vec2::new(640., 360.),
+                    &AspectRatio::try_new(640., 360.)?,
+                    &AspectRatio::try_new(640., 480.)?
+                ),
+                Boxing::new(Vec2::new(80., 0.), Vec2::new(480., 360.))
+            );
+            
+            assert_eq!(
+                calculate_boxing_from_aspect_ratios(
+                    &Vec2::new(480., 640.),
+                    &AspectRatio::try_new(480., 640.)?,
+                    &AspectRatio::try_new(1280., 720.)?
+                ),
+                Boxing::new(Vec2::new(0., 185.), Vec2::new(480., 270.))
+            );
+            
+            assert_eq!(
+                calculate_boxing_from_aspect_ratios(
+                    &Vec2::new(1280., 720.),
+                    &AspectRatio::try_new(1280., 720.)?,
+                    &AspectRatio::try_new(480., 640.)?
+                ),
+                Boxing::new(Vec2::new(370., 0.), Vec2::new(540., 720.))
+            );
+            
+            Ok(())
+        }
+
+        #[test]
+        fn test_calculate_boxing_imperfect() {
+            assert!(
+                calculate_boxing_perfect(&Vec2::new(640., 360.), &Vec2::new(640., 360.))
+                    .is_ok_and(|u| u.is_none()),
+                "Testing against the same resolution failed! (360p -> 360p)",
+            );
+
+            // Test Output with Expected Boxing
+            assert!(
+                calculate_boxing_perfect(&Vec2::new(1920., 1080.), &Vec2::new(1280., 720.))
+                    .ok()
+                    .flatten()
+                    .is_some_and(
+                        |u| u == Boxing::new(Vec2::new(320., 180.), Vec2::new(1280., 720.))
+                    ),
+                "Testing against a non-integer (but square) scaling failed! (720p -> 1080p)"
+            );
+
+            // Test Output to perfect scale
+            assert!(
+                calculate_boxing_perfect(&Vec2::new(3840., 2160.), &Vec2::new(1920., 1080.))
+                    .is_ok_and(|u| u.is_none()),
+                "Testing against an integer scale resolution failed! (1080p -> 2160p)"
+            );
+
+            assert!(
+                calculate_boxing_perfect(&Vec2::new(1280., 722.), &Vec2::new(640., 360.))
+                    .ok()
+                    .flatten()
+                    .is_some_and(|u| u == Boxing::new(Vec2::new(0., 1.), Vec2::new(1280., 720.))),
+                "Testing against minor increase to height in scaling failed! (360p -> 1280x722)"
+            );
+
+            assert!(
+                calculate_boxing_perfect(&Vec2::new(1282., 720.), &Vec2::new(640., 360.))
+                    .ok()
+                    .flatten()
+                    .is_some_and(|u| u == Boxing::new(Vec2::new(1., 0.), Vec2::new(1280., 720.))),
+                "Testing against minor increase to width in scaling failed! (360p -> 1282x720)"
+            );
+
+            assert!(
+                calculate_boxing_perfect(&Vec2::new(320., 180.), &Vec2::new(640., 360.))
+                    .is_ok_and(|u| u.is_none()),
+                "Testing against downscaling failed! (360p -> 180p)"
+            );
+
+            assert!(
+                calculate_boxing_perfect(&Vec2::new(324., 184.), &Vec2::new(640., 360.))
+                    .ok()
+                    .flatten()
+                    .is_some_and(|u| u == Boxing::new(Vec2::new(2., 2.), Vec2::new(320., 180.))),
+                "Testing against slight downscaling failed! (360p -> 180p)"
+            );
+
+            assert!(
+                calculate_boxing_perfect(&Vec2::new(320., 620.), &Vec2::new(320., 620.))
+                    .is_ok_and(|u| u.is_none()),
+                "Testing against Vertical Resolutions failed! (320x620 -> 320x620)"
+            );
+
+            assert!(
+                calculate_boxing_perfect(&Vec2::new(320., 620.), &Vec2::new(640., 360.))
+                    .ok()
+                    .flatten()
+                    .is_some_and(|u| u == Boxing::new(Vec2::new(0., 220.), Vec2::new(320., 180.))),
+                "Testing against Vertical Output to Widescreen Input failed! (360p -> 320x620)"
+            );
+
+            assert!(
+                calculate_boxing_perfect(&Vec2::new(1280., 720.), &Vec2::new(640., 480.))
+                    .ok()
+                    .flatten()
+                    .is_some_and(|u| u == Boxing::new(Vec2::new(320., 120.), Vec2::new(640., 480.))),
+                "Testing against 4:3 480p -> 16:9 720p failed!"
             );
         }
-    }
-    #[test]
-    fn test_calculate_pillarbox() {
-        let inputs: [(u32, u32); 6] =
-            [(100, 100), (100, 0), (100, 50), (50, 100), (0, 0), (0, 100)];
-        let physical_size = Vec2::new(640., 360.);
-        let outputs = [
-            Boxing::new(Vec2::new(100., 0.), Vec2::new(440., 360.)),
-            Boxing::new(Vec2::new(100., 0.), Vec2::new(540., 360.)),
-            Boxing::new(Vec2::new(100., 0.), Vec2::new(490., 360.)),
-            Boxing::new(Vec2::new(50., 0.), Vec2::new(490., 360.)),
-            Boxing::new(Vec2::new(0., 0.), Vec2::new(640., 360.)),
-            Boxing::new(Vec2::new(0., 0.), Vec2::new(540., 360.)),
-        ];
-        for (i, input) in inputs.iter().enumerate() {
-            assert_eq!(
-                calculate_pillarbox(&physical_size, (&input.0, &input.1)),
-                outputs[i]
+
+        #[test]
+        fn test_calculate_boxing_perfect() {
+            assert!(
+                calculate_boxing_perfect(&Vec2::new(640., 360.), &Vec2::new(640., 360.))
+                    .is_ok_and(|u| u.is_none()),
+                "Testing against the same resolution failed! (360p -> 360p)",
             );
+
+            // Test Output with Expected Boxing
+            assert!(
+                calculate_boxing_perfect(&Vec2::new(1920., 1080.), &Vec2::new(1280., 720.))
+                    .ok()
+                    .flatten()
+                    .is_some_and(
+                        |u| u == Boxing::new(Vec2::new(320., 180.), Vec2::new(1280., 720.))
+                    ),
+                "Testing against a non-integer (but square) scaling failed! (720p -> 1080p)"
+            );
+
+            // Test Output to perfect scale
+            assert!(
+                calculate_boxing_perfect(&Vec2::new(3840., 2160.), &Vec2::new(1920., 1080.))
+                    .is_ok_and(|u| u.is_none()),
+                "Testing against an integer scale resolution failed! (1080p -> 2160p)"
+            );
+
+            assert!(
+                calculate_boxing_perfect(&Vec2::new(1280., 722.), &Vec2::new(640., 360.))
+                    .ok()
+                    .flatten()
+                    .is_some_and(|u| u == Boxing::new(Vec2::new(0., 1.), Vec2::new(1280., 720.))),
+                "Testing against minor increase to height in scaling failed! (360p -> 1280x722)"
+            );
+
+            assert!(
+                calculate_boxing_perfect(&Vec2::new(1282., 720.), &Vec2::new(640., 360.))
+                    .ok()
+                    .flatten()
+                    .is_some_and(|u| u == Boxing::new(Vec2::new(1., 0.), Vec2::new(1280., 720.))),
+                "Testing against minor increase to width in scaling failed! (360p -> 1282x720)"
+            );
+
+            assert!(
+                calculate_boxing_perfect(&Vec2::new(320., 180.), &Vec2::new(640., 360.))
+                    .is_ok_and(|u| u.is_none()),
+                "Testing against downscaling failed! (360p -> 180p)"
+            );
+
+            assert!(
+                calculate_boxing_perfect(&Vec2::new(324., 184.), &Vec2::new(640., 360.))
+                    .ok()
+                    .flatten()
+                    .is_some_and(|u| u == Boxing::new(Vec2::new(2., 2.), Vec2::new(320., 180.))),
+                "Testing against slight downscaling failed! (360p -> 180p)"
+            );
+
+            assert!(
+                calculate_boxing_perfect(&Vec2::new(320., 620.), &Vec2::new(320., 620.))
+                    .is_ok_and(|u| u.is_none()),
+                "Testing against Vertical Resolutions failed! (320x620 -> 320x620)"
+            );
+
+            assert!(
+                calculate_boxing_perfect(&Vec2::new(320., 620.), &Vec2::new(640., 360.))
+                    .ok()
+                    .flatten()
+                    .is_some_and(|u| u == Boxing::new(Vec2::new(0., 220.), Vec2::new(320., 180.))),
+                "Testing against Vertical Output to Widescreen Input failed! (360p -> 320x620)"
+            );
+
+            assert!(
+                calculate_boxing_perfect(&Vec2::new(1280., 720.), &Vec2::new(640., 480.))
+                    .ok()
+                    .flatten()
+                    .is_some_and(|u| u == Boxing::new(Vec2::new(320., 120.), Vec2::new(640., 480.))),
+                "Testing against 4:3 480p -> 16:9 720p failed!"
+            );
+        }
+
+        #[test]
+        fn test_calculate_letterbox() {
+            let inputs: [(u32, u32); 6] =
+                [(100, 100), (100, 0), (100, 50), (50, 100), (0, 0), (0, 100)];
+            let physical_size = Vec2::new(640., 360.);
+            let outputs: [_; 6] = [
+                Boxing::new(Vec2::new(0., 100.), Vec2::new(640., 160.)),
+                Boxing::new(Vec2::new(0., 100.), Vec2::new(640., 260.)),
+                Boxing::new(Vec2::new(0., 100.), Vec2::new(640., 210.)),
+                Boxing::new(Vec2::new(0., 50.), Vec2::new(640., 210.)),
+                Boxing::new(Vec2::new(0., 0.), Vec2::new(640., 360.)),
+                Boxing::new(Vec2::new(0., 0.), Vec2::new(640., 260.)),
+            ];
+            for (i, input) in inputs.iter().enumerate() {
+                assert_eq!(
+                    calculate_letterbox(&physical_size, (&input.0, &input.1)),
+                    outputs[i]
+                );
+            }
+        }
+        #[test]
+        fn test_calculate_pillarbox() {
+            let inputs: [(u32, u32); 6] =
+                [(100, 100), (100, 0), (100, 50), (50, 100), (0, 0), (0, 100)];
+            let physical_size = Vec2::new(640., 360.);
+            let outputs = [
+                Boxing::new(Vec2::new(100., 0.), Vec2::new(440., 360.)),
+                Boxing::new(Vec2::new(100., 0.), Vec2::new(540., 360.)),
+                Boxing::new(Vec2::new(100., 0.), Vec2::new(490., 360.)),
+                Boxing::new(Vec2::new(50., 0.), Vec2::new(490., 360.)),
+                Boxing::new(Vec2::new(0., 0.), Vec2::new(640., 360.)),
+                Boxing::new(Vec2::new(0., 0.), Vec2::new(540., 360.)),
+            ];
+            for (i, input) in inputs.iter().enumerate() {
+                assert_eq!(
+                    calculate_pillarbox(&physical_size, (&input.0, &input.1)),
+                    outputs[i]
+                );
+            }
         }
     }
 }
