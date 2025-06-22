@@ -31,11 +31,12 @@ impl Plugin for CameraBoxingPlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<CameraBox>()
             .add_event::<AdjustBoxing>()
-            .add_systems(First, (windows_changed, camerabox_changed))
-            .add_systems(First, images_changed.run_if(on_event::<AssetEvent<Image>>.or(resource_changed_or_removed::<Assets<Image>>)))
+            .add_systems(First, (windows_changed, camerabox_changed).run_if(any_with_component::<CameraBox>))
+            .add_systems(First, images_changed
+                .run_if(any_with_component::<CameraBox>.and(on_event::<AssetEvent<Image>>.or(resource_changed_or_removed::<Assets<Image>>))))
             .add_systems(
                 First,
-                texture_views_changed.run_if(resource_changed_or_removed::<ManualTextureViews>),
+                texture_views_changed.run_if(any_with_component::<CameraBox>.and(resource_changed_or_removed::<ManualTextureViews>)),
             )
             .add_systems(
                 First,
@@ -1677,7 +1678,7 @@ mod tests {
                     },
                 ))
                 .id();
-            app.add_systems(First, camerabox_changed);
+            app.add_systems(First, camerabox_changed.run_if(any_with_component::<CameraBox>));
             app.add_event::<AdjustBoxing>();
             app.update();
             let mut camera_box = app.world_mut().get_mut::<CameraBox>(camera_id).unwrap();
@@ -1722,7 +1723,7 @@ mod tests {
                     position: None,
                 },
             ));
-            app.add_systems(First, windows_changed);
+            app.add_systems(First, windows_changed.run_if(any_with_component::<CameraBox>));
             app.add_event::<AdjustBoxing>();
             app.update();
             let mut window = app.world_mut().get_mut::<Window>(window_id).unwrap();
@@ -1746,11 +1747,34 @@ mod tests {
             app.add_systems(
                 First,
                 images_changed.run_if(
-                    resource_changed_or_removed::<Assets<Image>>.or(on_event::<AssetEvent<Image>>),
+                    any_with_component::<CameraBox>.and(resource_changed_or_removed::<Assets<Image>>.or(on_event::<AssetEvent<Image>>)),
                 ),
             );
             app.update();
 
+            let mut images = app.world_mut().resource_mut::<Assets<Image>>();
+            images.add(Image::default());
+            app.update();
+            let adjust_boxing_events = app.world().resource::<Events<AdjustBoxing>>();
+            let mut adjust_boxing_reader = adjust_boxing_events.get_cursor();
+            let boxing_adjust = adjust_boxing_reader.read(adjust_boxing_events).next();
+            assert!(boxing_adjust.is_none());
+
+            let event = AssetEvent::Modified {
+                id: AssetId::default(),
+            };
+            app.world_mut().send_event::<AssetEvent<Image>>(event);
+            app.update();
+            let adjust_boxing_events = app.world().resource::<Events<AdjustBoxing>>();
+            let mut adjust_boxing_reader = adjust_boxing_events.get_cursor();
+            let boxing_adjust = adjust_boxing_reader.read(adjust_boxing_events).next();
+            assert!(boxing_adjust.is_none());
+
+            app.world_mut().spawn(
+               CameraBox::LetterBox { top: 0, bottom: 0, strict_letterboxing: true } 
+            );
+            app.update();
+            
             let mut images = app.world_mut().resource_mut::<Assets<Image>>();
             images.add(Image::default());
             app.update();
@@ -1768,7 +1792,6 @@ mod tests {
             let mut adjust_boxing_reader = adjust_boxing_events.get_cursor();
             let boxing_adjust = adjust_boxing_reader.read(adjust_boxing_events).next();
             assert!(boxing_adjust.is_some());
-
             app.update();
 
             let adjust_boxing_events = app.world().resource::<Events<AdjustBoxing>>();
@@ -1787,7 +1810,7 @@ mod tests {
             app.update();
             app.add_systems(
                 First,
-                texture_views_changed.run_if(resource_changed_or_removed::<ManualTextureViews>),
+                texture_views_changed.run_if(any_with_component::<CameraBox>.and(resource_changed_or_removed::<ManualTextureViews>)),
             );
 
             // While this doesn't actually change anything it *does* work by forcing the Bevy
@@ -1798,7 +1821,15 @@ mod tests {
             let adjust_boxing_events = app.world().resource::<Events<AdjustBoxing>>();
             let mut adjust_boxing_reader = adjust_boxing_events.get_cursor();
             let boxing_adjust = adjust_boxing_reader.read(adjust_boxing_events).next();
-
+            assert!(boxing_adjust.is_none());
+            
+            app.world_mut().spawn(CameraBox::LetterBox { top: 0, bottom: 0, strict_letterboxing: false });
+            
+            let _ = app.world_mut().resource_mut::<ManualTextureViews>();
+            app.update();
+            let adjust_boxing_events = app.world().resource::<Events<AdjustBoxing>>();
+            let mut adjust_boxing_reader = adjust_boxing_events.get_cursor();
+            let boxing_adjust = adjust_boxing_reader.read(adjust_boxing_events).next();
             assert!(boxing_adjust.is_some());
         }
     }
