@@ -193,7 +193,7 @@ fn adjust_viewport(
                 }
 
                 viewport.physical_position = if position.is_none() {
-                    (target.physical_size - viewport.physical_size) / 2
+                    (target.physical_size - viewport.physical_size.clamp(UVec2::ZERO, target.physical_size)) / 2
                 } else {
                     position.unwrap()
                 };
