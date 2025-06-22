@@ -98,9 +98,9 @@ pub enum CameraBox {
         /// The bar at the bottom of the output.
         bottom: u32,
 
-        /// Whether we can attempt to scale the letterboxing if the output is smaller than
-        /// the desired sizing. If we can't, it will disable letterboxing when it can not accommodate
-        /// the sizes requested.
+        /// If false, we will attempt to scale the letterboxing if the output is smaller than the
+        /// size of the letterboxes. If this is true, then letterboxing will be disabled in the
+        /// cases where it would be smaller.
         strict_letterboxing: bool,
     },
 
@@ -111,6 +111,11 @@ pub enum CameraBox {
 
         /// The bar on the right side of the output.
         right: u32,
+
+        /// If false, we will attempt to scale the pillarboxing if the output is smaller than the
+        /// size of the pillarboxes. If this is true, then pillarboxing will be disabled in the
+        /// cases where it would be smaller.
+        strict_pillarboxing: bool,
     },
 }
 
@@ -313,20 +318,36 @@ fn adjust_viewport(
                 viewport.physical_size = output_resolution.as_uvec2();
                 camera.viewport = Some(viewport);
             }
-            CameraBox::PillarBox { left, right } => {
+            CameraBox::PillarBox {
+                left,
+                right,
+                strict_pillarboxing,
+            } => {
                 let mut viewport = match &mut camera.viewport {
                     None => Viewport::default(),
                     Some(viewport) => viewport.to_owned(),
                 };
 
                 let Boxing {
-                    boxing_offset,
-                    output_resolution,
+                    mut boxing_offset,
+                    mut output_resolution,
                 } = calculate_pillarbox(&target.physical_size.as_vec2(), (left, right));
+
+                if (output_resolution.x + boxing_offset.x > target.physical_size.x as f32
+                    || output_resolution.x <= 0.)
+                    && !strict_pillarboxing
+                {
+                    output_resolution.x = target.physical_size.x as f32 / 2.;
+                    boxing_offset.x /= 2.;
+                    let scale_factor =
+                        (target.physical_size.x as f32) / (output_resolution.x + boxing_offset.x);
+                    boxing_offset.x *= scale_factor;
+                }
 
                 if output_resolution.x <= 0.
                     || output_resolution.x > target.physical_size.x as f32
                     || output_resolution.x + boxing_offset.x > target.physical_size.x as f32
+                        && *strict_pillarboxing
                 {
                     camera.viewport = None;
                     continue;
@@ -825,7 +846,11 @@ mod tests {
         #[test]
         fn test_basic_pillarboxing() {
             let (mut app, camera_id) = setup_app(
-                CameraBox::PillarBox { left: 2, right: 2 },
+                CameraBox::PillarBox {
+                    left: 2,
+                    right: 2,
+                    strict_pillarboxing: false,
+                },
                 W360P.as_vec2().into(),
             );
             app.update();
@@ -840,7 +865,11 @@ mod tests {
             assert_eq!(viewport.physical_size, UVec2::new(636, 360));
 
             let (mut app, camera_id) = setup_app(
-                CameraBox::PillarBox { left: 5, right: 0 },
+                CameraBox::PillarBox {
+                    left: 5,
+                    right: 0,
+                    strict_pillarboxing: false,
+                },
                 W360P.as_vec2().into(),
             );
             app.update();
@@ -855,7 +884,11 @@ mod tests {
             assert_eq!(viewport.physical_size, UVec2::new(635, 360));
 
             let (mut app, camera_id) = setup_app(
-                CameraBox::PillarBox { left: 0, right: 5 },
+                CameraBox::PillarBox {
+                    left: 0,
+                    right: 5,
+                    strict_pillarboxing: false,
+                },
                 W360P.as_vec2().into(),
             );
             app.update();
@@ -870,7 +903,11 @@ mod tests {
             assert_eq!(viewport.physical_size, UVec2::new(635, 360));
 
             let (mut app, camera_id) = setup_app(
-                CameraBox::PillarBox { left: 5, right: 10 },
+                CameraBox::PillarBox {
+                    left: 5,
+                    right: 10,
+                    strict_pillarboxing: false,
+                },
                 W360P.as_vec2().into(),
             );
             app.update();
@@ -885,7 +922,11 @@ mod tests {
             assert_eq!(viewport.physical_size, UVec2::new(625, 360));
 
             let (mut app, camera_id) = setup_app(
-                CameraBox::PillarBox { left: 10, right: 5 },
+                CameraBox::PillarBox {
+                    left: 10,
+                    right: 5,
+                    strict_pillarboxing: false,
+                },
                 W360P.as_vec2().into(),
             );
             app.update();
@@ -898,6 +939,137 @@ mod tests {
                 .unwrap();
             assert_eq!(viewport.physical_position, UVec2::new(10, 0));
             assert_eq!(viewport.physical_size, UVec2::new(625, 360));
+
+            let (mut app, camera_id) = setup_app(
+                CameraBox::PillarBox {
+                    left: 640,
+                    right: 0,
+                    strict_pillarboxing: false,
+                },
+                W360P.as_vec2().into(),
+            );
+            app.update();
+            let viewport = app
+                .world()
+                .get::<Camera>(camera_id)
+                .unwrap()
+                .to_owned()
+                .viewport
+                .unwrap();
+            assert_eq!(viewport.physical_position, UVec2::new(320, 0));
+            assert_eq!(viewport.physical_size, UVec2::from(W180P).with_y(360));
+
+            let (mut app, camera_id) = setup_app(
+                CameraBox::PillarBox {
+                    left: 2,
+                    right: 2,
+                    strict_pillarboxing: true,
+                },
+                W360P.as_vec2().into(),
+            );
+            app.update();
+            let viewport = app
+                .world()
+                .get::<Camera>(camera_id)
+                .unwrap()
+                .to_owned()
+                .viewport
+                .unwrap();
+            assert_eq!(viewport.physical_position, UVec2::new(2, 0));
+            assert_eq!(viewport.physical_size, UVec2::new(636, 360));
+
+            let (mut app, camera_id) = setup_app(
+                CameraBox::PillarBox {
+                    left: 5,
+                    right: 0,
+                    strict_pillarboxing: true,
+                },
+                W360P.as_vec2().into(),
+            );
+            app.update();
+            let viewport = app
+                .world()
+                .get::<Camera>(camera_id)
+                .unwrap()
+                .to_owned()
+                .viewport
+                .unwrap();
+            assert_eq!(viewport.physical_position, UVec2::new(5, 0));
+            assert_eq!(viewport.physical_size, UVec2::new(635, 360));
+
+            let (mut app, camera_id) = setup_app(
+                CameraBox::PillarBox {
+                    left: 0,
+                    right: 5,
+                    strict_pillarboxing: true,
+                },
+                W360P.as_vec2().into(),
+            );
+            app.update();
+            let viewport = app
+                .world()
+                .get::<Camera>(camera_id)
+                .unwrap()
+                .to_owned()
+                .viewport
+                .unwrap();
+            assert_eq!(viewport.physical_position, UVec2::new(0, 0));
+            assert_eq!(viewport.physical_size, UVec2::new(635, 360));
+
+            let (mut app, camera_id) = setup_app(
+                CameraBox::PillarBox {
+                    left: 5,
+                    right: 10,
+                    strict_pillarboxing: true,
+                },
+                W360P.as_vec2().into(),
+            );
+            app.update();
+            let viewport = app
+                .world()
+                .get::<Camera>(camera_id)
+                .unwrap()
+                .to_owned()
+                .viewport
+                .unwrap();
+            assert_eq!(viewport.physical_position, UVec2::new(5, 0));
+            assert_eq!(viewport.physical_size, UVec2::new(625, 360));
+
+            let (mut app, camera_id) = setup_app(
+                CameraBox::PillarBox {
+                    left: 10,
+                    right: 5,
+                    strict_pillarboxing: true,
+                },
+                W360P.as_vec2().into(),
+            );
+            app.update();
+            let viewport = app
+                .world()
+                .get::<Camera>(camera_id)
+                .unwrap()
+                .to_owned()
+                .viewport
+                .unwrap();
+            assert_eq!(viewport.physical_position, UVec2::new(10, 0));
+            assert_eq!(viewport.physical_size, UVec2::new(625, 360));
+
+            let (mut app, camera_id) = setup_app(
+                CameraBox::PillarBox {
+                    left: 640,
+                    right: 0,
+                    strict_pillarboxing: true,
+                },
+                W360P.as_vec2().into(),
+            );
+            app.update();
+            let viewport = app
+                .world()
+                .get::<Camera>(camera_id)
+                .unwrap()
+                .to_owned()
+                .viewport;
+            assert!(viewport.is_none());
         }
 
         #[test]

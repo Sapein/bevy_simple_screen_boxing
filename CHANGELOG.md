@@ -6,6 +6,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 ## [Unreleased]
+- Implement `strict_pillarboxing` on `CameraBox::PillarBox`
 
 ## [0.1.1] - 2025-06-22  
 - Update Documentation
