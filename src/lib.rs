@@ -87,7 +87,7 @@ pub enum CameraBox {
         ///
         /// If the output resolution is expected to larger than, or equal to, the resolution
         /// specified then this does not matter.
-        allow_imperfect_aspect_ratios: bool,
+        allow_imperfect_downscaled_boxing: bool,
     },
 
     /// Have static letterboxing with specific sizes for each of the bars.
@@ -247,7 +247,7 @@ fn adjust_viewport(
             }
 
             CameraBox::ResolutionIntegerScale {
-                allow_imperfect_aspect_ratios,
+                allow_imperfect_downscaled_boxing: allow_imperfect_aspect_ratios,
                 resolution,
             } => {
                 let mut viewport = match &mut camera.viewport {
@@ -1439,7 +1439,7 @@ mod tests {
             let (mut app, camera_id) = setup_app(
                 CameraBox::ResolutionIntegerScale {
                     resolution: W360P.as_vec2().into(),
-                    allow_imperfect_aspect_ratios: true,
+                    allow_imperfect_downscaled_boxing: true,
                 },
                 W360P.as_vec2().into(),
             );
@@ -1455,7 +1455,7 @@ mod tests {
             let (mut app, camera_id) = setup_app(
                 CameraBox::ResolutionIntegerScale {
                     resolution: (640., 480.).into(),
-                    allow_imperfect_aspect_ratios: true,
+                    allow_imperfect_downscaled_boxing: true,
                 },
                 W720P.as_vec2().into(),
             );
@@ -1473,7 +1473,7 @@ mod tests {
             let (mut app, camera_id) = setup_app(
                 CameraBox::ResolutionIntegerScale {
                     resolution: W360P.as_vec2(),
-                    allow_imperfect_aspect_ratios: true,
+                    allow_imperfect_downscaled_boxing: true,
                 },
                 W720P.as_vec2().into(),
             );
@@ -1489,7 +1489,7 @@ mod tests {
             let (mut app, camera_id) = setup_app(
                 CameraBox::ResolutionIntegerScale {
                     resolution: W360P.as_vec2().into(),
-                    allow_imperfect_aspect_ratios: true,
+                    allow_imperfect_downscaled_boxing: true,
                 },
                 W180P.as_vec2().into(),
             );
@@ -1505,7 +1505,7 @@ mod tests {
             let (mut app, camera_id) = setup_app(
                 CameraBox::ResolutionIntegerScale {
                     resolution: W360P.as_vec2().into(),
-                    allow_imperfect_aspect_ratios: true,
+                    allow_imperfect_downscaled_boxing: true,
                 },
                 (W180P + 10).as_vec2().into(),
             );
@@ -1526,7 +1526,7 @@ mod tests {
             let (mut app, camera_id) = setup_app(
                 CameraBox::ResolutionIntegerScale {
                     resolution: W360P.as_vec2().into(),
-                    allow_imperfect_aspect_ratios: false,
+                    allow_imperfect_downscaled_boxing: false,
                 },
                 W360P.as_vec2().into(),
             );
@@ -1542,7 +1542,7 @@ mod tests {
             let (mut app, camera_id) = setup_app(
                 CameraBox::ResolutionIntegerScale {
                     resolution: (640., 480.).into(),
-                    allow_imperfect_aspect_ratios: false,
+                    allow_imperfect_downscaled_boxing: false,
                 },
                 W720P.as_vec2().into(),
             );
@@ -1560,7 +1560,7 @@ mod tests {
             let (mut app, camera_id) = setup_app(
                 CameraBox::ResolutionIntegerScale {
                     resolution: W360P.as_vec2(),
-                    allow_imperfect_aspect_ratios: false,
+                    allow_imperfect_downscaled_boxing: false,
                 },
                 W720P.as_vec2().into(),
             );
@@ -1576,7 +1576,7 @@ mod tests {
             let (mut app, camera_id) = setup_app(
                 CameraBox::ResolutionIntegerScale {
                     resolution: W360P.as_vec2().into(),
-                    allow_imperfect_aspect_ratios: false,
+                    allow_imperfect_downscaled_boxing: false,
                 },
                 W180P.as_vec2().into(),
             );
@@ -1592,7 +1592,7 @@ mod tests {
             let (mut app, camera_id) = setup_app(
                 CameraBox::ResolutionIntegerScale {
                     resolution: W360P.as_vec2().into(),
-                    allow_imperfect_aspect_ratios: false,
+                    allow_imperfect_downscaled_boxing: false,
                 },
                 (W180P + 10).as_vec2().into(),
             );
