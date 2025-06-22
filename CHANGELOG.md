@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rename `CameraBox::ResolutionIntegerScale.allow_imperfect_aspect_ratios` to `CameraBox::ResolutionIntegerScale.allow_imperfect_downscaled_boxing` as it's a better name.
 - Run `Assets<Image>` change detection system when the resource is changed, in addition to when `AssetEvents` is emitted.
 - All Change-Detection Systems have been updated to only run if at least one entity with a `CameraBox` component exists.
+- The Camera Change Detection System has been removed, as it would constantly trigger the moment the plugin boxed something.
+- Setting a position that can't be accommodated in `CameraBox::StaticResolution` will set the position to (0,0) and trigger a warning.
+- Setting a position that can't be accommodated in `CameraBox::StaticAspectRatio` will set the position to (0,0) and trigger a warning.
 
 ## [0.1.1] - 2025-06-22  
 - Added Logging instead of skipping errors and other issues.

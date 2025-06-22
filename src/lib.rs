@@ -62,6 +62,7 @@ pub enum CameraBox {
         resolution: UVec2,
 
         /// Where to put the Boxed output, if this is None then it will be centered.
+        /// If the output is not boxed, this will not be used.
         position: Option<UVec2>,
     },
 
@@ -71,6 +72,7 @@ pub enum CameraBox {
         aspect_ratio: AspectRatio,
 
         /// Where to put the Boxed output, if this is None then it will be centered.
+        /// If the output is not boxed, then this will not be used.
         position: Option<UVec2>,
     },
 
@@ -237,13 +239,7 @@ fn adjust_viewport(
                 let physical_aspect_ratio =
                     match AspectRatio::try_from(target.physical_size.as_vec2()) {
                         Ok(ar) if ar.ratio() == aspect_ratio.ratio() => {
-                            if position.is_none() {
-                                camera.viewport = None;
-                            } else {
-                                viewport.physical_position = position.unwrap();
-                                viewport.physical_size = target.physical_size;
-                                camera.viewport = Some(viewport);
-                            }
+                            camera.viewport = None;
                             continue;
                         }
                         Err(e) => {
@@ -258,18 +254,25 @@ fn adjust_viewport(
 
                 let Boxing {
                     boxing_offset,
-                    output_resolution: render_size,
+                    output_resolution,
                 } = calculate_boxing_from_aspect_ratios(
                     &target.physical_size.as_vec2(),
                     &physical_aspect_ratio,
                     aspect_ratio,
                 );
-
+                
+                viewport.physical_size = output_resolution.as_uvec2();
                 viewport.physical_position = match position {
                     None => boxing_offset.as_uvec2(),
-                    Some(pos) => *pos,
+                    Some(pos) => {
+                        if is_within_rect(&target.physical_size, pos, &viewport.physical_size) {
+                            *pos
+                        } else {
+                            warn!("Unable to place output with resolution {} at position {} within Render Target with size {}. Placing at (0,0) instead", output_resolution, pos, target.physical_size);
+                            UVec2::ZERO
+                        }
+                    },
                 };
-                viewport.physical_size = render_size.as_uvec2();
                 camera.viewport = Some(viewport);
             }
 
@@ -545,6 +548,11 @@ fn calculate_pillarbox(physical_size: &Vec2, pillarbox: (&u32, &u32)) -> Boxing 
         boxing_offset: Vec2::new(*pillarbox.0 as f32, 0.),
         output_resolution: Vec2::new(render_width, render_height),
     }
+}
+
+fn is_within_rect(rect: &UVec2, position: &UVec2, size: &UVec2) -> bool {
+    let actual_bounds = position + size;
+    rect.x >= actual_bounds.x && rect.y >= actual_bounds.y
 }
 
 #[cfg(test)]
@@ -1451,10 +1459,8 @@ mod tests {
                 .get::<Camera>(camera_id)
                 .unwrap()
                 .to_owned()
-                .viewport
-                .unwrap();
-            assert_eq!(viewport.physical_position, UVec2::new(1, 0));
-            assert_eq!(viewport.physical_size, W360P);
+                .viewport;
+            assert!(viewport.is_none());
 
             Ok(())
         }
