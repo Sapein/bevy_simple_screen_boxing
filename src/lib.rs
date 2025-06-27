@@ -46,6 +46,18 @@ pub enum CameraBoxSet {
 /// This event is used to tell us that we need to recalculate our Camera Boxes.
 pub struct AdjustBoxing;
 
+#[derive(Component, Reflect, Debug)]
+#[reflect(Component)]
+#[relationship(relationship_target=HasNested)]
+/// This is used to denote that a CameraBox is 'nested within' another camera box.
+/// Use this if you want to add on the effect of another CameraBox onto a CameraBox.
+pub struct NestedWithin(pub Entity);
+
+#[derive(Component, Reflect, Debug)]
+#[reflect(Component)]
+#[relationship_target(relationship=NestedWithin, linked_spawn)]
+pub struct HasNested(Entity);
+
 impl Plugin for CameraBoxingPlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<CameraBox>()
@@ -200,20 +212,26 @@ fn camerabox_changed(
     }
 }
 
+enum ViewportChanges {
+    SetToNone,
+    Box(Boxing),
+}
+
 fn adjust_viewport(
-    mut boxed_cameras: Query<(&mut Camera, &CameraBox)>,
+    mut boxed_cameras: Query<(&mut Camera, &CameraBox, Option<&HasNested>)>,
+    loose_boxes: Query<(&CameraBox, Option<&HasNested>), Without<Camera>>,
     primary_window: Option<Single<Entity, With<PrimaryWindow>>>,
     windows: Query<(Entity, &Window)>,
     texture_views: Res<ManualTextureViews>,
     images: Res<Assets<Image>>,
 ) {
     let primary_window = primary_window.map(|e| e.into_inner());
-    for (mut camera, camera_box) in boxed_cameras.iter_mut() {
+    for (mut camera, camera_box, nested_box) in boxed_cameras.iter_mut() {
         if !camera.is_active {
             continue;
         }
-        let target = camera.target.normalize(primary_window);
 
+        let target = camera.target.normalize(primary_window);
         let target = match target
             .and_then(|t| Some(t.get_render_target_info(windows, &images, &texture_views)))
         {
@@ -234,253 +252,325 @@ fn adjust_viewport(
             None => Viewport::default(),
             Some(viewport) => viewport.to_owned(),
         };
-        
-        match &camera_box {
-            CameraBox::StaticResolution {
-                resolution: size,
-                position,
-            } => {
-                if &target.physical_size == size && position.is_none() {
-                    camera.viewport = None;
-                    continue;
-                } else if position.is_some() {
-                    let position = position.unwrap();
-                    let offset = size.clamp(UVec2::ZERO, target.physical_size) + position;
-                    if (target.physical_size.x < offset.x || target.physical_size.y < offset.y)
-                        && viewport.physical_position == UVec2::ZERO
-                    {
-                        continue;
-                    }
-                }
 
-                if &viewport.physical_size != size {
-                    viewport.physical_size = size.clamp(UVec2::ONE, target.physical_size);
-                }
-
-                viewport.physical_position = if position.is_none() {
-                    (target.physical_size
-                        - viewport
-                            .physical_size
-                            .clamp(UVec2::ZERO, target.physical_size))
-                        / 2
-                } else {
-                    let position = position.unwrap();
-                    let offset = size.clamp(UVec2::ZERO, target.physical_size) + position;
-                    if target.physical_size.x >= offset.x && target.physical_size.y >= offset.y {
-                        position
-                    } else {
-                        warn_once!(
-                            "Unable to place output with resolution {} at position {} within Render Target with size {}. Placing at (0,0) instead",
-                            size,
-                            position,
-                            target.physical_size
-                        );
-                        UVec2::ZERO
-                    }
-                };
-                camera.viewport = Some(viewport);
-            }
-            CameraBox::StaticAspectRatio {
-                aspect_ratio,
-                position,
-            } => {
-                let physical_aspect_ratio =
-                    match AspectRatio::try_from(target.physical_size.as_vec2()) {
-                        Ok(ar) if ar.ratio() == aspect_ratio.ratio() => {
-                            camera.viewport = None;
-                            continue;
-                        }
-                        Err(e) => {
-                            warn!(
-                                "Error occurred when calculating aspect ratios for scaling: {:?}",
-                                e
-                            );
-                            continue;
-                        }
-                        Ok(ar) => ar,
+        match calculate_changes(
+            camera_box,
+            &target.physical_size,
+            &UVec2::ZERO,
+            &viewport.physical_size,
+        ) {
+            None => continue,
+            Some(ViewportChanges::SetToNone) => {
+                let mut current_child = nested_box;
+                let mut actually_none = true;
+                let mut boxing_offset = Vec2::ZERO;
+                let mut output_resolution = target.physical_size.as_vec2();
+                while let Some(child) = current_child {
+                    let (actual_child, next) = match loose_boxes.get(child.0) {
+                        Err(_) => continue,
+                        Ok(c) => c,
                     };
 
-                let Boxing {
-                    boxing_offset,
-                    output_resolution,
-                } = calculate_boxing_from_aspect_ratios(
-                    &target.physical_size.as_vec2(),
-                    &physical_aspect_ratio,
-                    aspect_ratio,
-                );
+                    match calculate_changes(
+                        actual_child,
+                        &output_resolution.as_uvec2(),
+                        &boxing_offset.as_uvec2(),
+                        &output_resolution.as_uvec2(),
+                    ) {
+                        None => break,
+                        Some(ViewportChanges::SetToNone) => (),
+                        Some(ViewportChanges::Box(boxing)) => {
+                            boxing_offset = boxing.boxing_offset;
+                            output_resolution = boxing.output_resolution;
+                            actually_none = false;
+                        }
+                    };
+                    current_child = next;
+                }
+                if actually_none {
+                    camera.viewport = None;
+                } else {
+                    viewport.physical_size = output_resolution.as_uvec2();
+                    viewport.physical_position = boxing_offset.as_uvec2();
+                    camera.viewport = Some(viewport);
+                }
+            }
+            Some(ViewportChanges::Box(Boxing {
+                                          mut boxing_offset,
+                                          mut output_resolution,
+                                      })) => {
+                let mut current_child = nested_box;
+                while let Some(child) = current_child {
+                    let (actual_child, next) = match loose_boxes.get(child.0) {
+                        Err(_) => continue,
+                        Ok(c) => c,
+                    };
+
+                    match calculate_changes(
+                        actual_child,
+                        &output_resolution.as_uvec2(),
+                        &boxing_offset.as_uvec2(),
+                        &output_resolution.as_uvec2(),
+                    ) {
+                        None => break,
+                        Some(ViewportChanges::SetToNone) => (),
+                        Some(ViewportChanges::Box(boxing)) => {
+                            boxing_offset = boxing.boxing_offset;
+                            output_resolution = boxing.output_resolution;
+                        }
+                    };
+                    current_child = next;
+                }
 
                 viewport.physical_size = output_resolution.as_uvec2();
-                viewport.physical_position = match position {
-                    None => boxing_offset.as_uvec2(),
+                viewport.physical_position = boxing_offset.as_uvec2();
+                camera.viewport = Some(viewport);
+            }
+        };
+    }
+}
+
+fn calculate_changes(
+    camerabox: &CameraBox,
+    physical_resolution: &UVec2,
+    render_placement: &UVec2,
+    render_size: &UVec2,
+) -> Option<ViewportChanges> {
+    match &camerabox {
+        CameraBox::StaticResolution {
+            resolution,
+            position,
+        } => {
+            if physical_resolution == resolution && position.is_none() {
+                return Some(ViewportChanges::SetToNone);
+            } else if let Some(position) = position {
+                let offset = resolution.clamp(UVec2::ZERO, *physical_resolution) + position;
+                if (physical_resolution.x < offset.x || physical_resolution.y < offset.y)
+                    && render_placement == &UVec2::ZERO
+                {
+                    return None;
+                }
+            }
+
+            let clamped_resolution = if render_size != resolution {
+                &resolution.clamp(UVec2::ONE, *physical_resolution)
+            } else {
+                resolution
+            };
+
+            let render_placement = if position.is_none() {
+                (physical_resolution - resolution.clamp(UVec2::ZERO, *physical_resolution)) / 2
+            } else {
+                let position = position.unwrap();
+                let offset = resolution.clamp(UVec2::ZERO, *physical_resolution) + position;
+                if physical_resolution.x >= offset.x && physical_resolution.y >= offset.y {
+                    position
+                } else {
+                    warn_once!(
+                        "Unable to place output with resolution {} at position {} within Render Target with size {}. Placing at (0,0) instead",
+                        resolution,
+                        position,
+                        physical_resolution
+                    );
+                    UVec2::ZERO
+                }
+            } + render_placement;
+            Some(ViewportChanges::Box(Boxing {
+                boxing_offset: render_placement.as_vec2(),
+                output_resolution: clamped_resolution.as_vec2(),
+            }))
+        }
+        CameraBox::StaticAspectRatio {
+            aspect_ratio,
+            position,
+        } => {
+            let physical_aspect_ratio = match AspectRatio::try_from(physical_resolution.as_vec2()) {
+                Ok(ar) if ar.ratio() == aspect_ratio.ratio() => {
+                    return Some(ViewportChanges::SetToNone);
+                }
+                Err(e) => {
+                    warn!(
+                        "Error occurred when calculating aspect ratios for scaling: {:?}",
+                        e
+                    );
+                    return None;
+                }
+                Ok(ar) => ar,
+            };
+
+            let Boxing {
+                boxing_offset,
+                output_resolution,
+            } = calculate_boxing_from_aspect_ratios(
+                &physical_resolution.as_vec2(),
+                &physical_aspect_ratio,
+                aspect_ratio,
+            );
+
+            Some(ViewportChanges::Box(Boxing {
+                output_resolution,
+                boxing_offset: match position {
+                    None => boxing_offset + render_placement.as_vec2(),
                     Some(pos) => {
-                        if is_within_rect(&target.physical_size, pos, &viewport.physical_size) {
-                            *pos
+                        (if is_within_rect(physical_resolution, pos, render_size) {
+                            pos.as_vec2()
                         } else {
                             warn_once!(
                                 "Unable to place output with resolution {} at position {} within Render Target with size {}. Placing at (0,0) instead",
                                 output_resolution,
                                 pos,
-                                target.physical_size
+                                physical_resolution,
                             );
-                            UVec2::ZERO
-                        }
+                            Vec2::ZERO
+                        }) + render_placement.as_vec2()
                     }
-                };
-                camera.viewport = Some(viewport);
-            }
-
-            CameraBox::ResolutionIntegerScale {
-                allow_imperfect_downscaled_boxing: allow_imperfect_aspect_ratios,
-                resolution,
-            } => {
-                let Boxing {
-                    boxing_offset,
+                },
+            }))
+        }
+        CameraBox::ResolutionIntegerScale {
+            resolution,
+            allow_imperfect_downscaled_boxing,
+        } => {
+            match if *allow_imperfect_downscaled_boxing {
+                calculate_boxing_imperfect(&physical_resolution.as_vec2(), resolution)
+            } else {
+                calculate_boxing_perfect(&physical_resolution.as_vec2(), resolution)
+            } {
+                Ok(None) => Some(ViewportChanges::SetToNone),
+                Ok(Some(Boxing {
+                            boxing_offset,
+                            output_resolution,
+                        })) => Some(ViewportChanges::Box(Boxing {
+                    boxing_offset: render_placement.as_vec2() + boxing_offset,
                     output_resolution,
-                } = match if *allow_imperfect_aspect_ratios {
-                    calculate_boxing_imperfect(&target.physical_size.as_vec2(), resolution)
-                } else {
-                    calculate_boxing_perfect(&target.physical_size.as_vec2(), resolution)
-                } {
-                    Ok(None) => {
-                        camera.viewport = None;
-                        continue;
-                    }
-                    Ok(Some(t)) => t,
-                    Err(e) => {
-                        warn!(
-                            "Error occurred when calculating aspect ratios for scaling: {:?}",
-                            e
-                        );
-                        continue;
-                    }
-                };
-
-                viewport.physical_position = boxing_offset.as_uvec2();
-                viewport.physical_size = output_resolution.as_uvec2();
-                camera.viewport = Some(viewport);
-            }
-            CameraBox::LetterBox {
-                top,
-                bottom,
-                strict_letterboxing,
-            } => {
-                let Boxing {
-                    mut boxing_offset,
-                    mut output_resolution,
-                } = calculate_letterbox(&target.physical_size.as_vec2(), (top, bottom));
-                if (output_resolution.y + boxing_offset.y > target.physical_size.y as f32
-                    || output_resolution.y <= 0.)
-                    && !strict_letterboxing
-                {
-                    output_resolution.y = target.physical_size.y as f32 / 2.;
-                    boxing_offset.y /= 2.;
-                    let scale_factor =
-                        (target.physical_size.y as f32) / (output_resolution.y + boxing_offset.y);
-                    boxing_offset.y *= scale_factor;
+                })),
+                Err(e) => {
+                    warn!(
+                        "Error occurred when calculating aspect ratios for scaling: {:?}",
+                        e
+                    );
+                    None
                 }
-
-                if (output_resolution.y <= 0.
-                    || output_resolution.y > target.physical_size.y as f32
-                    || output_resolution.y + boxing_offset.y > target.physical_size.y as f32)
-                    && *strict_letterboxing
-                {
-                    camera.viewport = None;
-                    continue;
-                }
-
-                viewport.physical_position = boxing_offset.as_uvec2();
-                viewport.physical_size = output_resolution.as_uvec2();
-                camera.viewport = Some(viewport);
             }
-            CameraBox::PillarBox {
-                left,
-                right,
-                strict_pillarboxing,
-            } => {
-                let Boxing {
-                    mut boxing_offset,
-                    mut output_resolution,
-                } = calculate_pillarbox(&target.physical_size.as_vec2(), (left, right));
+        }
+        CameraBox::LetterBox {
+            top,
+            bottom,
+            strict_letterboxing,
+        } => {
+            let Boxing {
+                mut boxing_offset,
+                mut output_resolution,
+            } = calculate_letterbox(&physical_resolution.as_vec2(), (top, bottom));
+            if (output_resolution.y + boxing_offset.y > physical_resolution.y as f32
+                || output_resolution.y <= 0.)
+                && !strict_letterboxing
+            {
+                output_resolution.y = physical_resolution.y as f32 / 2.;
+                boxing_offset.y /= 2.;
+                let scale_factor =
+                    (physical_resolution.y as f32) / (output_resolution.y + boxing_offset.y);
+                boxing_offset.y *= scale_factor;
+            }
 
-                if (output_resolution.x + boxing_offset.x > target.physical_size.x as f32
-                    || output_resolution.x <= 0.)
-                    && !strict_pillarboxing
+            if (output_resolution.y <= 0.
+                || output_resolution.y > physical_resolution.y as f32
+                || output_resolution.y + boxing_offset.y > physical_resolution.y as f32)
+                && *strict_letterboxing
+            {
+                return Some(ViewportChanges::SetToNone);
+            }
+
+            Some(ViewportChanges::Box(Boxing {
+                boxing_offset: boxing_offset + render_placement.as_vec2(),
+                output_resolution,
+            }))
+        }
+        CameraBox::PillarBox {
+            left,
+            right,
+            strict_pillarboxing,
+        } => {
+            let Boxing {
+                mut boxing_offset,
+                mut output_resolution,
+            } = calculate_pillarbox(&physical_resolution.as_vec2(), (left, right));
+
+            if (output_resolution.x + boxing_offset.x > physical_resolution.x as f32
+                || output_resolution.x <= 0.)
+                && !strict_pillarboxing
+            {
+                output_resolution.x = physical_resolution.x as f32 / 2.;
+                boxing_offset.x /= 2.;
+                let scale_factor =
+                    (physical_resolution.x as f32) / (output_resolution.x + boxing_offset.x);
+                boxing_offset.x *= scale_factor;
+            }
+
+            if output_resolution.x <= 0.
+                || output_resolution.x > physical_resolution.x as f32
+                || output_resolution.x + boxing_offset.x > physical_resolution.x as f32
+                && *strict_pillarboxing
+            {
+                return Some(ViewportChanges::SetToNone);
+            }
+
+            Some(ViewportChanges::Box(Boxing {
+                boxing_offset: boxing_offset + render_placement.as_vec2(),
+                output_resolution,
+            }))
+        }
+        CameraBox::WindowBox {
+            left,
+            right,
+            top,
+            bottom,
+            strict_windowboxing,
+        } => {
+            let letterboxing = (top, bottom);
+            let pillarboxing = (left, right);
+
+            let Boxing {
+                mut boxing_offset,
+                mut output_resolution,
+            } = calculate_windowbox(&physical_resolution.as_vec2(), [letterboxing, pillarboxing]);
+
+            if *strict_windowboxing {
+                if output_resolution.x <= 0.
+                    || !is_within_rect(
+                    physical_resolution,
+                    &boxing_offset.as_uvec2(),
+                    &output_resolution.as_uvec2(),
+                )
                 {
-                    output_resolution.x = target.physical_size.x as f32 / 2.;
+                    return Some(ViewportChanges::SetToNone);
+                }
+            } else {
+                if output_resolution.x + boxing_offset.x > physical_resolution.x as f32
+                    || output_resolution.x <= 0.
+                {
+                    output_resolution.x = physical_resolution.x as f32 / 2.;
                     boxing_offset.x /= 2.;
                     let scale_factor =
-                        (target.physical_size.x as f32) / (output_resolution.x + boxing_offset.x);
+                        (physical_resolution.x as f32) / (output_resolution.x + boxing_offset.x);
                     boxing_offset.x *= scale_factor;
                 }
 
-                if output_resolution.x <= 0.
-                    || output_resolution.x > target.physical_size.x as f32
-                    || output_resolution.x + boxing_offset.x > target.physical_size.x as f32
-                        && *strict_pillarboxing
+                if output_resolution.y + boxing_offset.y > physical_resolution.y as f32
+                    || output_resolution.y <= 0.
                 {
-                    camera.viewport = None;
-                    continue;
+                    output_resolution.y = physical_resolution.y as f32 / 2.;
+                    boxing_offset.y /= 2.;
+                    let scale_factor =
+                        (physical_resolution.y as f32) / (output_resolution.y + boxing_offset.y);
+                    boxing_offset.y *= scale_factor;
                 }
-
-                viewport.physical_position = boxing_offset.as_uvec2();
-                viewport.physical_size = output_resolution.as_uvec2();
-                camera.viewport = Some(viewport);
             }
-            CameraBox::WindowBox {
-                left,
-                right,
-                top,
-                bottom,
-                strict_windowboxing,
-            } => {
-                let letterboxing = (top, bottom);
-                let pillarboxing = (left, right);
 
-                let Boxing {
-                    mut boxing_offset,
-                    mut output_resolution,
-                } = calculate_windowbox(
-                    &target.physical_size.as_vec2(),
-                    [letterboxing, pillarboxing],
-                );
-
-                if *strict_windowboxing {
-                    if output_resolution.x <= 0.
-                        || !is_within_rect(
-                            &target.physical_size,
-                            &boxing_offset.as_uvec2(),
-                            &output_resolution.as_uvec2(),
-                        )
-                    {
-                        camera.viewport = None;
-                        continue;
-                    }
-                } else {
-                    if output_resolution.x + boxing_offset.x > target.physical_size.x as f32
-                        || output_resolution.x <= 0.
-                    {
-                        output_resolution.x = target.physical_size.x as f32 / 2.;
-                        boxing_offset.x /= 2.;
-                        let scale_factor = (target.physical_size.x as f32)
-                            / (output_resolution.x + boxing_offset.x);
-                        boxing_offset.x *= scale_factor;
-                    }
-
-                    if output_resolution.y + boxing_offset.y > target.physical_size.y as f32
-                        || output_resolution.y <= 0.
-                    {
-                        output_resolution.y = target.physical_size.y as f32 / 2.;
-                        boxing_offset.y /= 2.;
-                        let scale_factor = (target.physical_size.y as f32)
-                            / (output_resolution.y + boxing_offset.y);
-                        boxing_offset.y *= scale_factor;
-                    }
-                }
-
-                viewport.physical_position = boxing_offset.as_uvec2();
-                viewport.physical_size = output_resolution.as_uvec2();
-                camera.viewport = Some(viewport);
-            }
+            Some(ViewportChanges::Box(Boxing {
+                output_resolution,
+                boxing_offset: boxing_offset + render_placement.as_vec2(),
+            }))
         }
     }
 }
@@ -525,7 +615,7 @@ fn calculate_boxing_imperfect(physical_size: &Vec2, desired_size: &Vec2) -> Resu
 
     let has_int_scale = desired_aspect_ratio.ratio() == physical_aspect_ratio.ratio()
         && ((height_scale % 1. == 0. && width_scale % 1. == 0.)
-            || (small_height_scale % 1. == 0. && small_width_scale % 1. == 0.));
+        || (small_height_scale % 1. == 0. && small_width_scale % 1. == 0.));
 
     // Integer Scaling Exists
     if has_int_scale {
@@ -591,7 +681,7 @@ fn calculate_boxing_perfect(physical_size: &Vec2, desired_size: &Vec2) -> Result
         } else {
             height_scale
         }
-        .ceil();
+            .ceil();
 
         let render_height = desired_size.y / best_divisor;
         let render_width = desired_size.x / best_divisor;
@@ -608,7 +698,7 @@ fn calculate_boxing_perfect(physical_size: &Vec2, desired_size: &Vec2) -> Result
         } else {
             width_scale
         }
-        .floor();
+            .floor();
 
         let render_width = desired_size.x * best_scale;
         let render_height = desired_size.y * best_scale;
@@ -661,6 +751,1396 @@ fn is_within_rect(rect: &UVec2, position: &UVec2, size: &UVec2) -> bool {
     let actual_bounds = position + size;
     rect.x >= actual_bounds.x && rect.y >= actual_bounds.y
 }
+
+// #[cfg(test)]
+// mod tests {
+//     use super::*;
+//     impl Boxing {
+//         fn new(boxing_offset: Vec2, output_resolution: Vec2) -> Self {
+//             Boxing {
+//                 boxing_offset,
+//                 output_resolution,
+//             }
+//         }
+//     }
+// 
+//     mod internal {
+//         use super::*;
+// 
+//         #[test]
+//         fn test_aspect_ratio_scaling() -> Result<()> {
+//             assert_eq!(
+//                 calculate_boxing_from_aspect_ratios(
+//                     &Vec2::new(640., 360.),
+//                     &AspectRatio::try_new(640., 360.)?,
+//                     &AspectRatio::try_new(640., 360.)?
+//                 ),
+//                 Boxing::new(Vec2::ZERO, Vec2::new(640., 360.))
+//             );
+// 
+//             assert_eq!(
+//                 calculate_boxing_from_aspect_ratios(
+//                     &Vec2::new(1280., 720.),
+//                     &AspectRatio::try_new(1280., 720.)?,
+//                     &AspectRatio::try_new(640., 360.)?
+//                 ),
+//                 Boxing::new(Vec2::ZERO, Vec2::new(1280., 720.))
+//             );
+// 
+//             assert_eq!(
+//                 calculate_boxing_from_aspect_ratios(
+//                     &Vec2::new(1920., 1080.),
+//                     &AspectRatio::try_new(1920., 1080.)?,
+//                     &AspectRatio::try_new(1280., 720.)?
+//                 ),
+//                 Boxing::new(Vec2::ZERO, Vec2::new(1920., 1080.))
+//             );
+// 
+//             assert_eq!(
+//                 calculate_boxing_from_aspect_ratios(
+//                     &Vec2::new(640., 480.),
+//                     &AspectRatio::try_new(640., 480.)?,
+//                     &AspectRatio::try_new(640., 360.)?
+//                 ),
+//                 Boxing::new(Vec2::new(0., 60.), Vec2::new(640., 360.))
+//             );
+// 
+//             assert_eq!(
+//                 calculate_boxing_from_aspect_ratios(
+//                     &Vec2::new(640., 360.),
+//                     &AspectRatio::try_new(640., 360.)?,
+//                     &AspectRatio::try_new(640., 480.)?
+//                 ),
+//                 Boxing::new(Vec2::new(80., 0.), Vec2::new(480., 360.))
+//             );
+// 
+//             assert_eq!(
+//                 calculate_boxing_from_aspect_ratios(
+//                     &Vec2::new(480., 640.),
+//                     &AspectRatio::try_new(480., 640.)?,
+//                     &AspectRatio::try_new(1280., 720.)?
+//                 ),
+//                 Boxing::new(Vec2::new(0., 185.), Vec2::new(480., 270.))
+//             );
+// 
+//             assert_eq!(
+//                 calculate_boxing_from_aspect_ratios(
+//                     &Vec2::new(1280., 720.),
+//                     &AspectRatio::try_new(1280., 720.)?,
+//                     &AspectRatio::try_new(480., 640.)?
+//                 ),
+//                 Boxing::new(Vec2::new(370., 0.), Vec2::new(540., 720.))
+//             );
+// 
+//             Ok(())
+//         }
+// 
+//         #[test]
+//         fn test_calculate_boxing_imperfect() {
+//             assert!(
+//                 calculate_boxing_imperfect(&Vec2::new(640., 360.), &Vec2::new(640., 360.))
+//                     .is_ok_and(|u| u.is_none()),
+//                 "Testing against the same resolution failed! (360p -> 360p)",
+//             );
+// 
+//             // Test Output with Expected Boxing
+//             assert!(
+//                 calculate_boxing_imperfect(&Vec2::new(1920., 1080.), &Vec2::new(1280., 720.))
+//                     .ok()
+//                     .flatten()
+//                     .is_some_and(
+//                         |u| u == Boxing::new(Vec2::new(320., 180.), Vec2::new(1280., 720.))
+//                     ),
+//                 "Testing against a non-integer (but square) scaling failed! (720p -> 1080p)"
+//             );
+// 
+//             // Test Output to imperfect scale
+//             assert!(
+//                 calculate_boxing_imperfect(&Vec2::new(3840., 2160.), &Vec2::new(1920., 1080.))
+//                     .is_ok_and(|u| u.is_none()),
+//                 "Testing against an integer scale resolution failed! (1080p -> 2160p)"
+//             );
+// 
+//             assert!(
+//                 calculate_boxing_imperfect(&Vec2::new(1280., 722.), &Vec2::new(640., 360.))
+//                     .ok()
+//                     .flatten()
+//                     .is_some_and(|u| u == Boxing::new(Vec2::new(0., 1.), Vec2::new(1280., 720.))),
+//                 "Testing against minor increase to height in scaling failed! (360p -> 1280x722)"
+//             );
+// 
+//             assert!(
+//                 calculate_boxing_imperfect(&Vec2::new(1282., 720.), &Vec2::new(640., 360.))
+//                     .ok()
+//                     .flatten()
+//                     .is_some_and(|u| u == Boxing::new(Vec2::new(1., 0.), Vec2::new(1280., 720.))),
+//                 "Testing against minor increase to width in scaling failed! (360p -> 1282x720)"
+//             );
+// 
+//             assert!(
+//                 calculate_boxing_imperfect(&Vec2::new(320., 180.), &Vec2::new(640., 360.))
+//                     .is_ok_and(|u| u.is_none()),
+//                 "Testing against downscaling failed! (360p -> 180p)"
+//             );
+// 
+//             assert!(
+//                 calculate_boxing_imperfect(&Vec2::new(330., 190.), &Vec2::new(640., 360.))
+//                     .ok()
+//                     .flatten()
+//                     .is_some_and(
+//                         |u| u == Boxing::new(Vec2::new(0., 2.1875), Vec2::new(330., 185.625))
+//                     ),
+//                 "Testing against off downscaling failed! (360p -> (180p + 10))"
+//             );
+// 
+//             assert!(
+//                 calculate_boxing_imperfect(&Vec2::new(320., 620.), &Vec2::new(320., 620.))
+//                     .is_ok_and(|u| u.is_none()),
+//                 "Testing against Vertical Resolutions failed! (320x620 -> 320x620)"
+//             );
+// 
+//             assert!(
+//                 calculate_boxing_imperfect(&Vec2::new(320., 620.), &Vec2::new(640., 360.))
+//                     .ok()
+//                     .flatten()
+//                     .is_some_and(|u| u == Boxing::new(Vec2::new(0., 220.), Vec2::new(320., 180.))),
+//                 "Testing against Vertical Output to Widescreen Input failed! (360p -> 320x620)"
+//             );
+// 
+//             assert!(
+//                 calculate_boxing_imperfect(&Vec2::new(1280., 720.), &Vec2::new(640., 480.))
+//                     .ok()
+//                     .flatten()
+//                     .is_some_and(|u| u == Boxing::new(Vec2::new(320., 120.), Vec2::new(640., 480.))),
+//                 "Testing against 4:3 480p -> 16:9 720p failed!"
+//             );
+//         }
+// 
+//         #[test]
+//         fn test_calculate_boxing_perfect() {
+//             assert!(
+//                 calculate_boxing_perfect(&Vec2::new(640., 360.), &Vec2::new(640., 360.))
+//                     .is_ok_and(|u| u.is_none()),
+//                 "Testing against the same resolution failed! (360p -> 360p)",
+//             );
+// 
+//             // Test Output with Expected Boxing
+//             assert!(
+//                 calculate_boxing_perfect(&Vec2::new(1920., 1080.), &Vec2::new(1280., 720.))
+//                     .ok()
+//                     .flatten()
+//                     .is_some_and(
+//                         |u| u == Boxing::new(Vec2::new(320., 180.), Vec2::new(1280., 720.))
+//                     ),
+//                 "Testing against a non-integer (but square) scaling failed! (720p -> 1080p)"
+//             );
+// 
+//             // Test Output to perfect scale
+//             assert!(
+//                 calculate_boxing_perfect(&Vec2::new(3840., 2160.), &Vec2::new(1920., 1080.))
+//                     .is_ok_and(|u| u.is_none()),
+//                 "Testing against an integer scale resolution failed! (1080p -> 2160p)"
+//             );
+// 
+//             assert!(
+//                 calculate_boxing_perfect(&Vec2::new(1280., 722.), &Vec2::new(640., 360.))
+//                     .ok()
+//                     .flatten()
+//                     .is_some_and(|u| u == Boxing::new(Vec2::new(0., 1.), Vec2::new(1280., 720.))),
+//                 "Testing against minor increase to height in scaling failed! (360p -> 1280x722)"
+//             );
+// 
+//             assert!(
+//                 calculate_boxing_perfect(&Vec2::new(1282., 720.), &Vec2::new(640., 360.))
+//                     .ok()
+//                     .flatten()
+//                     .is_some_and(|u| u == Boxing::new(Vec2::new(1., 0.), Vec2::new(1280., 720.))),
+//                 "Testing against minor increase to width in scaling failed! (360p -> 1282x720)"
+//             );
+// 
+//             assert!(
+//                 calculate_boxing_perfect(&Vec2::new(320., 180.), &Vec2::new(640., 360.))
+//                     .is_ok_and(|u| u.is_none()),
+//                 "Testing against downscaling failed! (360p -> 180p)"
+//             );
+// 
+//             assert!(
+//                 calculate_boxing_perfect(&Vec2::new(330., 190.), &Vec2::new(640., 360.))
+//                     .ok()
+//                     .flatten()
+//                     .is_some_and(|u| u == Boxing::new(Vec2::new(5., 5.), Vec2::new(320., 180.))),
+//                 "Testing against off downscaling failed! (360p -> (180p + 10))"
+//             );
+// 
+//             assert!(
+//                 calculate_boxing_perfect(&Vec2::new(320., 620.), &Vec2::new(320., 620.))
+//                     .is_ok_and(|u| u.is_none()),
+//                 "Testing against Vertical Resolutions failed! (320x620 -> 320x620)"
+//             );
+// 
+//             assert!(
+//                 calculate_boxing_perfect(&Vec2::new(320., 620.), &Vec2::new(640., 360.))
+//                     .ok()
+//                     .flatten()
+//                     .is_some_and(|u| u == Boxing::new(Vec2::new(0., 220.), Vec2::new(320., 180.))),
+//                 "Testing against Vertical Output to Widescreen Input failed! (360p -> 320x620)"
+//             );
+// 
+//             assert!(
+//                 calculate_boxing_perfect(&Vec2::new(1280., 720.), &Vec2::new(640., 480.))
+//                     .ok()
+//                     .flatten()
+//                     .is_some_and(|u| u == Boxing::new(Vec2::new(320., 120.), Vec2::new(640., 480.))),
+//                 "Testing against 4:3 480p -> 16:9 720p failed!"
+//             );
+//         }
+// 
+//         #[test]
+//         fn test_calculate_letterbox() {
+//             let inputs: [(u32, u32); 6] =
+//                 [(100, 100), (100, 0), (100, 50), (50, 100), (0, 0), (0, 100)];
+//             let physical_size = Vec2::new(640., 360.);
+//             let outputs: [_; 6] = [
+//                 Boxing::new(Vec2::new(0., 100.), Vec2::new(640., 160.)),
+//                 Boxing::new(Vec2::new(0., 100.), Vec2::new(640., 260.)),
+//                 Boxing::new(Vec2::new(0., 100.), Vec2::new(640., 210.)),
+//                 Boxing::new(Vec2::new(0., 50.), Vec2::new(640., 210.)),
+//                 Boxing::new(Vec2::new(0., 0.), Vec2::new(640., 360.)),
+//                 Boxing::new(Vec2::new(0., 0.), Vec2::new(640., 260.)),
+//             ];
+//             for (i, input) in inputs.iter().enumerate() {
+//                 assert_eq!(
+//                     calculate_letterbox(&physical_size, (&input.0, &input.1)),
+//                     outputs[i]
+//                 );
+//             }
+//         }
+//         #[test]
+//         fn test_calculate_pillarbox() {
+//             let inputs: [(u32, u32); 6] =
+//                 [(100, 100), (100, 0), (100, 50), (50, 100), (0, 0), (0, 100)];
+//             let physical_size = Vec2::new(640., 360.);
+//             let outputs = [
+//                 Boxing::new(Vec2::new(100., 0.), Vec2::new(440., 360.)),
+//                 Boxing::new(Vec2::new(100., 0.), Vec2::new(540., 360.)),
+//                 Boxing::new(Vec2::new(100., 0.), Vec2::new(490., 360.)),
+//                 Boxing::new(Vec2::new(50., 0.), Vec2::new(490., 360.)),
+//                 Boxing::new(Vec2::new(0., 0.), Vec2::new(640., 360.)),
+//                 Boxing::new(Vec2::new(0., 0.), Vec2::new(540., 360.)),
+//             ];
+//             for (i, input) in inputs.iter().enumerate() {
+//                 assert_eq!(
+//                     calculate_pillarbox(&physical_size, (&input.0, &input.1)),
+//                     outputs[i]
+//                 );
+//             }
+//         }
+// 
+//         #[test]
+//         fn test_calculate_windowbox() {
+//             let inputs: [[(&u32, &u32); 2]; 8] = [
+//                 [(&0, &0), (&0, &0)],     //Test Noboxing
+//                 [(&100, &100), (&0, &0)], //Test Letterboxing
+//                 [(&0, &0), (&100, &100)], //Test Pillarboxing
+//                 [(&50, &0), (&50, &0)],   //Test Boxing Bottom Left
+//                 [(&0, &50), (&0, &50)],   //Test Bottom Boxing.
+//                 [(&50, &50), (&50, &50)], //Test Full Boxing
+//                 [(&50, &0), (&0, &50)],   //Test Opp Boxing
+//                 [(&0, &50), (&50, &0)],   //Test Opp Boxing 2
+//             ];
+//             let physical_size = Vec2::new(640., 360.);
+// 
+//             let outputs: [Boxing; 8] = [
+//                 Boxing::new(Vec2::new(0., 0.), physical_size),
+//                 Boxing::new(Vec2::new(0., 100.), Vec2::new(640., 160.)),
+//                 Boxing::new(Vec2::new(100., 0.), Vec2::new(440., 360.)),
+//                 Boxing::new(Vec2::new(50., 50.), Vec2::new(590., 310.)),
+//                 Boxing::new(Vec2::new(0., 0.), Vec2::new(590., 310.)),
+//                 Boxing::new(Vec2::new(50., 50.), Vec2::new(540., 260.)),
+//                 Boxing::new(Vec2::new(0., 50.), Vec2::new(590., 310.)),
+//                 Boxing::new(Vec2::new(50., 0.), Vec2::new(590., 310.)),
+//             ];
+// 
+//             for (i, input) in inputs.into_iter().enumerate() {
+//                 assert_eq!(calculate_windowbox(&physical_size, input), outputs[i],);
+//             }
+//         }
+//     }
+// 
+//     mod systems {
+//         use super::*;
+//         use bevy_asset::AssetId;
+//         use bevy_camera::RenderTarget;
+//         use bevy_window::{WindowRef, WindowResolution};
+// 
+//         const W360P: UVec2 = UVec2::new(640, 360);
+//         const W720P: UVec2 = UVec2::new(1280, 720);
+//         const W180P: UVec2 = UVec2::new(320, 180);
+// 
+//         fn setup_app(camerabox: CameraBox, window_resolution: WindowResolution) -> (App, Entity) {
+//             let mut app = App::new();
+// 
+//             app.init_resource::<ManualTextureViews>();
+//             app.init_resource::<Assets<Image>>();
+//             app.world_mut().spawn((
+//                 Window {
+//                     resolution: window_resolution,
+//                     ..Window::default()
+//                 },
+//                 PrimaryWindow,
+//             ));
+//             let camera_id = app
+//                 .world_mut()
+//                 .spawn((
+//                     Camera {
+//                         viewport: None,
+//                         is_active: true,
+//                         target: RenderTarget::Window(WindowRef::Primary),
+//                         ..Camera::default()
+//                     },
+//                     camerabox,
+//                 ))
+//                 .id();
+//             app.add_systems(First, adjust_viewport);
+//             (app, camera_id)
+//         }
+// 
+//         #[test]
+//         fn test_basic_windowboxing() {
+//             let (mut app, camera_id) = setup_app(
+//                 CameraBox::WindowBox {
+//                     left: 10,
+//                     right: 10,
+//                     top: 10,
+//                     bottom: 10,
+//                     strict_windowboxing: false,
+//                 },
+//                 W360P.into(),
+//             );
+//             app.update();
+//             let viewport = app
+//                 .world()
+//                 .get::<Camera>(camera_id)
+//                 .unwrap()
+//                 .to_owned()
+//                 .viewport
+//                 .unwrap();
+//             assert_eq!(viewport.physical_position, UVec2::new(10, 10));
+//             assert_eq!(viewport.physical_size, UVec2::new(620, 340));
+// 
+//             let (mut app, camera_id) = setup_app(
+//                 CameraBox::WindowBox {
+//                     left: 10,
+//                     right: 10,
+//                     top: 10,
+//                     bottom: 10,
+//                     strict_windowboxing: true,
+//                 },
+//                 W360P.into(),
+//             );
+//             app.update();
+//             let viewport = app
+//                 .world()
+//                 .get::<Camera>(camera_id)
+//                 .unwrap()
+//                 .to_owned()
+//                 .viewport
+//                 .unwrap();
+//             assert_eq!(viewport.physical_position, UVec2::new(10, 10));
+//             assert_eq!(viewport.physical_size, UVec2::new(620, 340));
+// 
+//             let (mut app, camera_id) = setup_app(
+//                 CameraBox::WindowBox {
+//                     left: 650,
+//                     right: 0,
+//                     top: 370,
+//                     bottom: 0,
+//                     strict_windowboxing: true,
+//                 },
+//                 W360P.into(),
+//             );
+//             app.update();
+//             let viewport = app
+//                 .world()
+//                 .get::<Camera>(camera_id)
+//                 .unwrap()
+//                 .to_owned()
+//                 .viewport;
+//             assert!(viewport.is_none());
+// 
+//             let (mut app, camera_id) = setup_app(
+//                 CameraBox::WindowBox {
+//                     left: 650,
+//                     right: 0,
+//                     top: 370,
+//                     bottom: 0,
+//                     strict_windowboxing: false,
+//                 },
+//                 W360P.into(),
+//             );
+//             app.update();
+//             let viewport = app
+//                 .world()
+//                 .get::<Camera>(camera_id)
+//                 .unwrap()
+//                 .to_owned()
+//                 .viewport
+//                 .unwrap();
+//             assert_eq!(viewport.physical_position, UVec2::new(322, 182));
+//             assert_eq!(viewport.physical_size, UVec2::new(320, 180));
+//         }
+// 
+//         #[test]
+//         fn test_basic_pillarboxing() {
+//             let (mut app, camera_id) = setup_app(
+//                 CameraBox::PillarBox {
+//                     left: 2,
+//                     right: 2,
+//                     strict_pillarboxing: false,
+//                 },
+//                 W360P.into(),
+//             );
+//             app.update();
+//             let viewport = app
+//                 .world()
+//                 .get::<Camera>(camera_id)
+//                 .unwrap()
+//                 .to_owned()
+//                 .viewport
+//                 .unwrap();
+//             assert_eq!(viewport.physical_position, UVec2::new(2, 0));
+//             assert_eq!(viewport.physical_size, UVec2::new(636, 360));
+// 
+//             let (mut app, camera_id) = setup_app(
+//                 CameraBox::PillarBox {
+//                     left: 5,
+//                     right: 0,
+//                     strict_pillarboxing: false,
+//                 },
+//                 W360P.into(),
+//             );
+//             app.update();
+//             let viewport = app
+//                 .world()
+//                 .get::<Camera>(camera_id)
+//                 .unwrap()
+//                 .to_owned()
+//                 .viewport
+//                 .unwrap();
+//             assert_eq!(viewport.physical_position, UVec2::new(5, 0));
+//             assert_eq!(viewport.physical_size, UVec2::new(635, 360));
+// 
+//             let (mut app, camera_id) = setup_app(
+//                 CameraBox::PillarBox {
+//                     left: 0,
+//                     right: 5,
+//                     strict_pillarboxing: false,
+//                 },
+//                 W360P.into(),
+//             );
+//             app.update();
+//             let viewport = app
+//                 .world()
+//                 .get::<Camera>(camera_id)
+//                 .unwrap()
+//                 .to_owned()
+//                 .viewport
+//                 .unwrap();
+//             assert_eq!(viewport.physical_position, UVec2::new(0, 0));
+//             assert_eq!(viewport.physical_size, UVec2::new(635, 360));
+// 
+//             let (mut app, camera_id) = setup_app(
+//                 CameraBox::PillarBox {
+//                     left: 5,
+//                     right: 10,
+//                     strict_pillarboxing: false,
+//                 },
+//                 W360P.into(),
+//             );
+//             app.update();
+//             let viewport = app
+//                 .world()
+//                 .get::<Camera>(camera_id)
+//                 .unwrap()
+//                 .to_owned()
+//                 .viewport
+//                 .unwrap();
+//             assert_eq!(viewport.physical_position, UVec2::new(5, 0));
+//             assert_eq!(viewport.physical_size, UVec2::new(625, 360));
+// 
+//             let (mut app, camera_id) = setup_app(
+//                 CameraBox::PillarBox {
+//                     left: 10,
+//                     right: 5,
+//                     strict_pillarboxing: false,
+//                 },
+//                 W360P.into(),
+//             );
+//             app.update();
+//             let viewport = app
+//                 .world()
+//                 .get::<Camera>(camera_id)
+//                 .unwrap()
+//                 .to_owned()
+//                 .viewport
+//                 .unwrap();
+//             assert_eq!(viewport.physical_position, UVec2::new(10, 0));
+//             assert_eq!(viewport.physical_size, UVec2::new(625, 360));
+// 
+//             let (mut app, camera_id) = setup_app(
+//                 CameraBox::PillarBox {
+//                     left: 640,
+//                     right: 0,
+//                     strict_pillarboxing: false,
+//                 },
+//                 W360P.into(),
+//             );
+//             app.update();
+//             let viewport = app
+//                 .world()
+//                 .get::<Camera>(camera_id)
+//                 .unwrap()
+//                 .to_owned()
+//                 .viewport
+//                 .unwrap();
+//             assert_eq!(viewport.physical_position, UVec2::new(320, 0));
+//             assert_eq!(viewport.physical_size, UVec2::from(W180P).with_y(360));
+// 
+//             let (mut app, camera_id) = setup_app(
+//                 CameraBox::PillarBox {
+//                     left: 2,
+//                     right: 2,
+//                     strict_pillarboxing: true,
+//                 },
+//                 W360P.into(),
+//             );
+//             app.update();
+//             let viewport = app
+//                 .world()
+//                 .get::<Camera>(camera_id)
+//                 .unwrap()
+//                 .to_owned()
+//                 .viewport
+//                 .unwrap();
+//             assert_eq!(viewport.physical_position, UVec2::new(2, 0));
+//             assert_eq!(viewport.physical_size, UVec2::new(636, 360));
+// 
+//             let (mut app, camera_id) = setup_app(
+//                 CameraBox::PillarBox {
+//                     left: 5,
+//                     right: 0,
+//                     strict_pillarboxing: true,
+//                 },
+//                 W360P.into(),
+//             );
+//             app.update();
+//             let viewport = app
+//                 .world()
+//                 .get::<Camera>(camera_id)
+//                 .unwrap()
+//                 .to_owned()
+//                 .viewport
+//                 .unwrap();
+//             assert_eq!(viewport.physical_position, UVec2::new(5, 0));
+//             assert_eq!(viewport.physical_size, UVec2::new(635, 360));
+// 
+//             let (mut app, camera_id) = setup_app(
+//                 CameraBox::PillarBox {
+//                     left: 0,
+//                     right: 5,
+//                     strict_pillarboxing: true,
+//                 },
+//                 W360P.into(),
+//             );
+//             app.update();
+//             let viewport = app
+//                 .world()
+//                 .get::<Camera>(camera_id)
+//                 .unwrap()
+//                 .to_owned()
+//                 .viewport
+//                 .unwrap();
+//             assert_eq!(viewport.physical_position, UVec2::new(0, 0));
+//             assert_eq!(viewport.physical_size, UVec2::new(635, 360));
+// 
+//             let (mut app, camera_id) = setup_app(
+//                 CameraBox::PillarBox {
+//                     left: 5,
+//                     right: 10,
+//                     strict_pillarboxing: true,
+//                 },
+//                 W360P.into(),
+//             );
+//             app.update();
+//             let viewport = app
+//                 .world()
+//                 .get::<Camera>(camera_id)
+//                 .unwrap()
+//                 .to_owned()
+//                 .viewport
+//                 .unwrap();
+//             assert_eq!(viewport.physical_position, UVec2::new(5, 0));
+//             assert_eq!(viewport.physical_size, UVec2::new(625, 360));
+// 
+//             let (mut app, camera_id) = setup_app(
+//                 CameraBox::PillarBox {
+//                     left: 10,
+//                     right: 5,
+//                     strict_pillarboxing: true,
+//                 },
+//                 W360P.into(),
+//             );
+//             app.update();
+//             let viewport = app
+//                 .world()
+//                 .get::<Camera>(camera_id)
+//                 .unwrap()
+//                 .to_owned()
+//                 .viewport
+//                 .unwrap();
+//             assert_eq!(viewport.physical_position, UVec2::new(10, 0));
+//             assert_eq!(viewport.physical_size, UVec2::new(625, 360));
+// 
+//             let (mut app, camera_id) = setup_app(
+//                 CameraBox::PillarBox {
+//                     left: 640,
+//                     right: 0,
+//                     strict_pillarboxing: true,
+//                 },
+//                 W360P.into(),
+//             );
+//             app.update();
+//             let viewport = app
+//                 .world()
+//                 .get::<Camera>(camera_id)
+//                 .unwrap()
+//                 .to_owned()
+//                 .viewport;
+//             assert!(viewport.is_none());
+//         }
+// 
+//         #[test]
+//         fn test_basic_letterboxing() {
+//             let (mut app, camera_id) = setup_app(
+//                 CameraBox::LetterBox {
+//                     top: 2,
+//                     bottom: 2,
+//                     strict_letterboxing: true,
+//                 },
+//                 W360P.into(),
+//             );
+//             app.update();
+//             let viewport = app
+//                 .world()
+//                 .get::<Camera>(camera_id)
+//                 .unwrap()
+//                 .to_owned()
+//                 .viewport
+//                 .unwrap();
+//             assert_eq!(viewport.physical_position, UVec2::new(0, 2));
+//             assert_eq!(viewport.physical_size, UVec2::new(640, 356));
+// 
+//             let (mut app, camera_id) = setup_app(
+//                 CameraBox::LetterBox {
+//                     top: 5,
+//                     bottom: 0,
+//                     strict_letterboxing: true,
+//                 },
+//                 W360P.into(),
+//             );
+//             app.update();
+//             let viewport = app
+//                 .world()
+//                 .get::<Camera>(camera_id)
+//                 .unwrap()
+//                 .to_owned()
+//                 .viewport
+//                 .unwrap();
+//             assert_eq!(viewport.physical_position, UVec2::new(0, 5));
+//             assert_eq!(viewport.physical_size, UVec2::new(640, 355));
+// 
+//             let (mut app, camera_id) = setup_app(
+//                 CameraBox::LetterBox {
+//                     top: 0,
+//                     bottom: 5,
+//                     strict_letterboxing: true,
+//                 },
+//                 W360P.into(),
+//             );
+//             app.update();
+//             let viewport = app
+//                 .world()
+//                 .get::<Camera>(camera_id)
+//                 .unwrap()
+//                 .to_owned()
+//                 .viewport
+//                 .unwrap();
+//             assert_eq!(viewport.physical_position, UVec2::new(0, 0));
+//             assert_eq!(viewport.physical_size, UVec2::new(640, 355));
+// 
+//             let (mut app, camera_id) = setup_app(
+//                 CameraBox::LetterBox {
+//                     top: 10,
+//                     bottom: 5,
+//                     strict_letterboxing: true,
+//                 },
+//                 W360P.into(),
+//             );
+//             app.update();
+//             let viewport = app
+//                 .world()
+//                 .get::<Camera>(camera_id)
+//                 .unwrap()
+//                 .to_owned()
+//                 .viewport
+//                 .unwrap();
+//             assert_eq!(viewport.physical_position, UVec2::new(0, 10));
+//             assert_eq!(viewport.physical_size, UVec2::new(640, 345));
+// 
+//             let (mut app, camera_id) = setup_app(
+//                 CameraBox::LetterBox {
+//                     top: 5,
+//                     bottom: 10,
+//                     strict_letterboxing: true,
+//                 },
+//                 W360P.into(),
+//             );
+//             app.update();
+//             let viewport = app
+//                 .world()
+//                 .get::<Camera>(camera_id)
+//                 .unwrap()
+//                 .to_owned()
+//                 .viewport
+//                 .unwrap();
+//             assert_eq!(viewport.physical_position, UVec2::new(0, 5));
+//             assert_eq!(viewport.physical_size, UVec2::new(640, 345));
+// 
+//             let (mut app, camera_id) = setup_app(
+//                 CameraBox::LetterBox {
+//                     top: 360,
+//                     bottom: 0,
+//                     strict_letterboxing: true,
+//                 },
+//                 W360P.into(),
+//             );
+//             app.update();
+//             let viewport = app
+//                 .world()
+//                 .get::<Camera>(camera_id)
+//                 .unwrap()
+//                 .to_owned()
+//                 .viewport;
+//             assert!(viewport.is_none());
+// 
+//             let (mut app, camera_id) = setup_app(
+//                 CameraBox::LetterBox {
+//                     top: 2,
+//                     bottom: 2,
+//                     strict_letterboxing: false,
+//                 },
+//                 W360P.into(),
+//             );
+//             app.update();
+//             let viewport = app
+//                 .world()
+//                 .get::<Camera>(camera_id)
+//                 .unwrap()
+//                 .to_owned()
+//                 .viewport
+//                 .unwrap();
+//             assert_eq!(viewport.physical_position, UVec2::new(0, 2));
+//             assert_eq!(viewport.physical_size, UVec2::new(640, 356));
+// 
+//             let (mut app, camera_id) = setup_app(
+//                 CameraBox::LetterBox {
+//                     top: 5,
+//                     bottom: 0,
+//                     strict_letterboxing: false,
+//                 },
+//                 W360P.into(),
+//             );
+//             app.update();
+//             let viewport = app
+//                 .world()
+//                 .get::<Camera>(camera_id)
+//                 .unwrap()
+//                 .to_owned()
+//                 .viewport
+//                 .unwrap();
+//             assert_eq!(viewport.physical_position, UVec2::new(0, 5));
+//             assert_eq!(viewport.physical_size, UVec2::new(640, 355));
+// 
+//             let (mut app, camera_id) = setup_app(
+//                 CameraBox::LetterBox {
+//                     top: 0,
+//                     bottom: 5,
+//                     strict_letterboxing: false,
+//                 },
+//                 W360P.into(),
+//             );
+//             app.update();
+//             let viewport = app
+//                 .world()
+//                 .get::<Camera>(camera_id)
+//                 .unwrap()
+//                 .to_owned()
+//                 .viewport
+//                 .unwrap();
+//             assert_eq!(viewport.physical_position, UVec2::new(0, 0));
+//             assert_eq!(viewport.physical_size, UVec2::new(640, 355));
+// 
+//             let (mut app, camera_id) = setup_app(
+//                 CameraBox::LetterBox {
+//                     top: 10,
+//                     bottom: 5,
+//                     strict_letterboxing: false,
+//                 },
+//                 W360P.into(),
+//             );
+//             app.update();
+//             let viewport = app
+//                 .world()
+//                 .get::<Camera>(camera_id)
+//                 .unwrap()
+//                 .to_owned()
+//                 .viewport
+//                 .unwrap();
+//             assert_eq!(viewport.physical_position, UVec2::new(0, 10));
+//             assert_eq!(viewport.physical_size, UVec2::new(640, 345));
+// 
+//             let (mut app, camera_id) = setup_app(
+//                 CameraBox::LetterBox {
+//                     top: 5,
+//                     bottom: 10,
+//                     strict_letterboxing: false,
+//                 },
+//                 W360P.into(),
+//             );
+//             app.update();
+//             let viewport = app
+//                 .world()
+//                 .get::<Camera>(camera_id)
+//                 .unwrap()
+//                 .to_owned()
+//                 .viewport
+//                 .unwrap();
+//             assert_eq!(viewport.physical_position, UVec2::new(0, 5));
+//             assert_eq!(viewport.physical_size, UVec2::new(640, 345));
+// 
+//             let (mut app, camera_id) = setup_app(
+//                 CameraBox::LetterBox {
+//                     top: 360,
+//                     bottom: 0,
+//                     strict_letterboxing: false,
+//                 },
+//                 W360P.into(),
+//             );
+//             app.update();
+//             let viewport = app
+//                 .world()
+//                 .get::<Camera>(camera_id)
+//                 .unwrap()
+//                 .to_owned()
+//                 .viewport
+//                 .unwrap();
+//             assert_eq!(viewport.physical_position, UVec2::new(0, 180));
+//             assert_eq!(viewport.physical_size, UVec2::new(640, 180));
+//         }
+// 
+//         #[test]
+//         fn test_basic_resolution() {
+//             let (mut app, camera_id) = setup_app(
+//                 CameraBox::StaticResolution {
+//                     resolution: W360P.into(),
+//                     position: None,
+//                 },
+//                 W360P.into(),
+//             );
+//             app.update();
+//             let viewport = app
+//                 .world()
+//                 .get::<Camera>(camera_id)
+//                 .unwrap()
+//                 .to_owned()
+//                 .viewport;
+//             assert!(viewport.is_none());
+// 
+//             let (mut app, camera_id) = setup_app(
+//                 CameraBox::StaticResolution {
+//                     resolution: W360P.into(),
+//                     position: Some((1, 0).into()),
+//                 },
+//                 W360P.into(),
+//             );
+//             app.update();
+//             let viewport = app
+//                 .world()
+//                 .get::<Camera>(camera_id)
+//                 .unwrap()
+//                 .to_owned()
+//                 .viewport;
+//             assert!(viewport.is_none());
+// 
+//             let (mut app, camera_id) = setup_app(
+//                 CameraBox::StaticResolution {
+//                     resolution: W360P.into(),
+//                     position: None,
+//                 },
+//                 W720P.into(),
+//             );
+//             app.update();
+//             let viewport = app
+//                 .world()
+//                 .get::<Camera>(camera_id)
+//                 .unwrap()
+//                 .to_owned()
+//                 .viewport
+//                 .unwrap();
+//             assert_eq!(viewport.physical_position, UVec2::new(320, 180));
+//             assert_eq!(viewport.physical_size, W360P);
+// 
+//             let (mut app, camera_id) = setup_app(
+//                 CameraBox::StaticResolution {
+//                     resolution: W360P.into(),
+//                     position: None,
+//                 },
+//                 W180P.into(),
+//             );
+//             app.update();
+//             let viewport = app
+//                 .world()
+//                 .get::<Camera>(camera_id)
+//                 .unwrap()
+//                 .to_owned()
+//                 .viewport
+//                 .unwrap();
+//             assert_eq!(viewport.physical_position, UVec2::new(0, 0));
+//             assert_eq!(viewport.physical_size, W180P);
+//         }
+// 
+//         #[test]
+//         fn test_basic_aspect_ratio() -> Result<()> {
+//             let desired_aspect_ratio = AspectRatio::try_from(W720P.as_vec2())?;
+//             let (mut app, camera_id) = setup_app(
+//                 CameraBox::StaticAspectRatio {
+//                     aspect_ratio: desired_aspect_ratio,
+//                     position: None,
+//                 },
+//                 W360P.into(),
+//             );
+//             app.update();
+//             let viewport = app
+//                 .world()
+//                 .get::<Camera>(camera_id)
+//                 .unwrap()
+//                 .to_owned()
+//                 .viewport;
+//             assert!(viewport.is_none());
+// 
+//             let desired_aspect_ratio = AspectRatio::try_new(640., 480.)?;
+//             let (mut app, camera_id) = setup_app(
+//                 CameraBox::StaticAspectRatio {
+//                     aspect_ratio: desired_aspect_ratio,
+//                     position: None,
+//                 },
+//                 W720P.into(),
+//             );
+//             app.update();
+//             let viewport = app
+//                 .world()
+//                 .get::<Camera>(camera_id)
+//                 .unwrap()
+//                 .to_owned()
+//                 .viewport
+//                 .unwrap();
+//             assert_eq!(viewport.physical_position, UVec2::new(160, 0));
+//             assert_eq!(viewport.physical_size, UVec2::new(960, 720));
+// 
+//             let desired_aspect_ratio = AspectRatio::try_from(W720P)?;
+//             let (mut app, camera_id) = setup_app(
+//                 CameraBox::StaticAspectRatio {
+//                     aspect_ratio: desired_aspect_ratio,
+//                     position: Some((1, 0).into()),
+//                 },
+//                 W360P.into(),
+//             );
+//             app.update();
+//             let viewport = app
+//                 .world()
+//                 .get::<Camera>(camera_id)
+//                 .unwrap()
+//                 .to_owned()
+//                 .viewport;
+//             assert!(viewport.is_none());
+// 
+//             Ok(())
+//         }
+// 
+//         #[test]
+//         fn test_basic_integer_scaling_imperfect() {
+//             let (mut app, camera_id) = setup_app(
+//                 CameraBox::ResolutionIntegerScale {
+//                     resolution: W360P.into(),
+//                     allow_imperfect_downscaled_boxing: true,
+//                 },
+//                 W360P.into(),
+//             );
+//             app.update();
+//             let viewport = app
+//                 .world()
+//                 .get::<Camera>(camera_id)
+//                 .unwrap()
+//                 .to_owned()
+//                 .viewport;
+//             assert!(viewport.is_none());
+// 
+//             let (mut app, camera_id) = setup_app(
+//                 CameraBox::ResolutionIntegerScale {
+//                     resolution: (640., 480.).into(),
+//                     allow_imperfect_downscaled_boxing: true,
+//                 },
+//                 W720P.into(),
+//             );
+//             app.update();
+//             let viewport = app
+//                 .world()
+//                 .get::<Camera>(camera_id)
+//                 .unwrap()
+//                 .to_owned()
+//                 .viewport
+//                 .unwrap();
+//             assert_eq!(viewport.physical_position, UVec2::new(320, 120));
+//             assert_eq!(viewport.physical_size, UVec2::new(640, 480));
+// 
+//             let (mut app, camera_id) = setup_app(
+//                 CameraBox::ResolutionIntegerScale {
+//                     resolution: W360P,
+//                     allow_imperfect_downscaled_boxing: true,
+//                 },
+//                 W720P.into(),
+//             );
+//             app.update();
+//             let viewport = app
+//                 .world()
+//                 .get::<Camera>(camera_id)
+//                 .unwrap()
+//                 .to_owned()
+//                 .viewport;
+//             assert!(viewport.is_none());
+// 
+//             let (mut app, camera_id) = setup_app(
+//                 CameraBox::ResolutionIntegerScale {
+//                     resolution: W360P.into(),
+//                     allow_imperfect_downscaled_boxing: true,
+//                 },
+//                 W180P.into(),
+//             );
+//             app.update();
+//             let viewport = app
+//                 .world()
+//                 .get::<Camera>(camera_id)
+//                 .unwrap()
+//                 .to_owned()
+//                 .viewport;
+//             assert!(viewport.is_none());
+// 
+//             let (mut app, camera_id) = setup_app(
+//                 CameraBox::ResolutionIntegerScale {
+//                     resolution: W360P.into(),
+//                     allow_imperfect_downscaled_boxing: true,
+//                 },
+//                 (W180P + 10).into(),
+//             );
+//             app.update();
+//             let viewport = app
+//                 .world()
+//                 .get::<Camera>(camera_id)
+//                 .unwrap()
+//                 .to_owned()
+//                 .viewport
+//                 .unwrap();
+//             assert_eq!(viewport.physical_position, UVec2::new(0, 2));
+//             assert_eq!(viewport.physical_size, UVec2::new(330, 185));
+//         }
+// 
+//         #[test]
+//         fn test_basic_integer_scaling_perfect() {
+//             let (mut app, camera_id) = setup_app(
+//                 CameraBox::ResolutionIntegerScale {
+//                     resolution: W360P.into(),
+//                     allow_imperfect_downscaled_boxing: false,
+//                 },
+//                 W360P.into(),
+//             );
+//             app.update();
+//             let viewport = app
+//                 .world()
+//                 .get::<Camera>(camera_id)
+//                 .unwrap()
+//                 .to_owned()
+//                 .viewport;
+//             assert!(viewport.is_none());
+// 
+//             let (mut app, camera_id) = setup_app(
+//                 CameraBox::ResolutionIntegerScale {
+//                     resolution: (640., 480.).into(),
+//                     allow_imperfect_downscaled_boxing: false,
+//                 },
+//                 W720P.into(),
+//             );
+//             app.update();
+//             let viewport = app
+//                 .world()
+//                 .get::<Camera>(camera_id)
+//                 .unwrap()
+//                 .to_owned()
+//                 .viewport
+//                 .unwrap();
+//             assert_eq!(viewport.physical_position, UVec2::new(320, 120));
+//             assert_eq!(viewport.physical_size, UVec2::new(640, 480));
+// 
+//             let (mut app, camera_id) = setup_app(
+//                 CameraBox::ResolutionIntegerScale {
+//                     resolution: W360P.as_vec2(),
+//                     allow_imperfect_downscaled_boxing: false,
+//                 },
+//                 W720P.into(),
+//             );
+//             app.update();
+//             let viewport = app
+//                 .world()
+//                 .get::<Camera>(camera_id)
+//                 .unwrap()
+//                 .to_owned()
+//                 .viewport;
+//             assert!(viewport.is_none());
+// 
+//             let (mut app, camera_id) = setup_app(
+//                 CameraBox::ResolutionIntegerScale {
+//                     resolution: W360P.as_vec2().into(),
+//                     allow_imperfect_downscaled_boxing: false,
+//                 },
+//                 W180P.into(),
+//             );
+//             app.update();
+//             let viewport = app
+//                 .world()
+//                 .get::<Camera>(camera_id)
+//                 .unwrap()
+//                 .to_owned()
+//                 .viewport;
+//             assert!(viewport.is_none());
+// 
+//             let (mut app, camera_id) = setup_app(
+//                 CameraBox::ResolutionIntegerScale {
+//                     resolution: W360P.as_vec2().into(),
+//                     allow_imperfect_downscaled_boxing: false,
+//                 },
+//                 (W180P + 10).into(),
+//             );
+//             app.update();
+//             let viewport = app
+//                 .world()
+//                 .get::<Camera>(camera_id)
+//                 .unwrap()
+//                 .to_owned()
+//                 .viewport
+//                 .unwrap();
+//             assert_eq!(viewport.physical_position, UVec2::new(5, 5));
+//             assert_eq!(viewport.physical_size, UVec2::new(320, 180));
+//         }
+// 
+//         #[test]
+//         fn test_camerabox_changed_detection() {
+//             let mut app = App::new();
+// 
+//             app.init_resource::<ManualTextureViews>();
+//             app.init_resource::<Assets<Image>>();
+//             app.world_mut().spawn((
+//                 Window {
+//                     resolution: W360P.into(),
+//                     ..Window::default()
+//                 },
+//                 PrimaryWindow,
+//             ));
+//             let camera_id = app
+//                 .world_mut()
+//                 .spawn((
+//                     Camera {
+//                         viewport: None,
+//                         is_active: true,
+//                         target: RenderTarget::Window(WindowRef::Primary),
+//                         ..Camera::default()
+//                     },
+//                     CameraBox::StaticResolution {
+//                         resolution: W360P,
+//                         position: None,
+//                     },
+//                 ))
+//                 .id();
+//             app.add_systems(
+//                 First,
+//                 camerabox_changed.run_if(any_with_component::<CameraBox>),
+//             );
+//             app.add_message::<AdjustBoxing>();
+//             app.update();
+//             let mut camera_box = app.world_mut().get_mut::<CameraBox>(camera_id).unwrap();
+//             *camera_box = CameraBox::LetterBox {
+//                 top: 10,
+//                 bottom: 10,
+//                 strict_letterboxing: true,
+//             };
+//             app.update();
+//             let adjust_boxing_events = app.world().resource::<Messages<AdjustBoxing>>();
+//             let mut adjust_boxing_reader = adjust_boxing_events.get_cursor();
+//             let boxing_adjust = adjust_boxing_reader.read(adjust_boxing_events).next();
+// 
+//             assert!(boxing_adjust.is_some())
+//         }
+// 
+//         #[test]
+//         fn test_window_changed_detection() {
+//             let mut app = App::new();
+// 
+//             app.init_resource::<ManualTextureViews>();
+//             app.init_resource::<Assets<Image>>();
+//             let window_id = app
+//                 .world_mut()
+//                 .spawn((
+//                     Window {
+//                         resolution: W360P.into(),
+//                         ..Window::default()
+//                     },
+//                     PrimaryWindow,
+//                 ))
+//                 .id();
+//             app.world_mut().spawn((CameraBox::StaticResolution {
+//                 resolution: W360P,
+//                 position: None,
+//             },));
+//             app.add_systems(
+//                 First,
+//                 windows_changed.run_if(any_with_component::<CameraBox>),
+//             );
+//             app.add_message::<AdjustBoxing>();
+//             app.update();
+//             let mut window = app.world_mut().get_mut::<Window>(window_id).unwrap();
+//             window.resolution = W720P.into();
+//             app.update();
+//             let adjust_boxing_events = app.world().resource::<Messages<AdjustBoxing>>();
+//             let mut adjust_boxing_reader = adjust_boxing_events.get_cursor();
+//             let boxing_adjust = adjust_boxing_reader.read(adjust_boxing_events).next();
+// 
+//             assert!(boxing_adjust.is_some())
+//         }
+// 
+//         #[test]
+//         fn test_image_changed_detection() {
+//             let mut app = App::new();
+// 
+//             app.init_resource::<ManualTextureViews>();
+//             app.init_resource::<Assets<Image>>();
+//             app.add_message::<AssetEvent<Image>>();
+//             app.add_message::<AdjustBoxing>();
+//             app.add_systems(
+//                 First,
+//                 images_changed.run_if(any_with_component::<CameraBox>.and(
+//                     resource_changed_or_removed::<Assets<Image>>.or(on_message::<AssetEvent<Image>>),
+//                 )),
+//             );
+//             app.update();
+// 
+//             let mut images = app.world_mut().resource_mut::<Assets<Image>>();
+//             images.add(Image::default());
+//             app.update();
+//             let adjust_boxing_events = app.world().resource::<Messages<AdjustBoxing>>();
+//             let mut adjust_boxing_reader = adjust_boxing_events.get_cursor();
+//             let boxing_adjust = adjust_boxing_reader.read(adjust_boxing_events).next();
+//             assert!(boxing_adjust.is_none());
+// 
+//             let event = AssetEvent::Modified {
+//                 id: AssetId::default(),
+//             };
+//             app.world_mut().write_message::<AssetEvent<Image>>(event);
+//             app.update();
+//             let adjust_boxing_events = app.world().resource::<Messages<AdjustBoxing>>();
+//             let mut adjust_boxing_reader = adjust_boxing_events.get_cursor();
+//             let boxing_adjust = adjust_boxing_reader.read(adjust_boxing_events).next();
+//             assert!(boxing_adjust.is_none());
+// 
+//             app.world_mut().spawn(CameraBox::LetterBox {
+//                 top: 0,
+//                 bottom: 0,
+//                 strict_letterboxing: true,
+//             });
+//             app.update();
+// 
+//             let mut images = app.world_mut().resource_mut::<Assets<Image>>();
+//             images.add(Image::default());
+//             app.update();
+//             let adjust_boxing_events = app.world().resource::<Messages<AdjustBoxing>>();
+//             let mut adjust_boxing_reader = adjust_boxing_events.get_cursor();
+//             let boxing_adjust = adjust_boxing_reader.read(adjust_boxing_events).next();
+//             assert!(boxing_adjust.is_some());
+// 
+//             let event = AssetEvent::Modified {
+//                 id: AssetId::default(),
+//             };
+//             app.world_mut().write_message::<AssetEvent<Image>>(event);
+//             app.update();
+//             let adjust_boxing_events = app.world().resource::<Messages<AdjustBoxing>>();
+//             let mut adjust_boxing_reader = adjust_boxing_events.get_cursor();
+//             let boxing_adjust = adjust_boxing_reader.read(adjust_boxing_events).next();
+//             assert!(boxing_adjust.is_some());
+//             app.update();
+// 
+//             let adjust_boxing_events = app.world().resource::<Messages<AdjustBoxing>>();
+//             let mut adjust_boxing_reader = adjust_boxing_events.get_cursor();
+//             let boxing_adjust = adjust_boxing_reader.read(adjust_boxing_events).next();
+//             assert!(boxing_adjust.is_none());
+//         }
+// 
+//         #[test]
+//         fn test_textureviews_changed_detection() {
+//             let mut app = App::new();
+// 
+//             app.init_resource::<ManualTextureViews>();
+//             app.init_resource::<Assets<Image>>();
+//             app.add_message::<AdjustBoxing>();
+//             app.update();
+//             app.add_systems(
+//                 First,
+//                 texture_views_changed.run_if(
+//                     any_with_component::<CameraBox>
+//                         .and(resource_changed_or_removed::<ManualTextureViews>),
+//                 ),
+//             );
+// 
+//             // While this doesn't actually change anything it *does* work by forcing the Bevy
+//             // to detect a change, even though we don't do anything, since Bevy has to assume that
+//             // any mutable access might've changed something, it seems.
+//             let _ = app.world_mut().resource_mut::<ManualTextureViews>();
+//             app.update();
+//             let adjust_boxing_events = app.world().resource::<Messages<AdjustBoxing>>();
+//             let mut adjust_boxing_reader = adjust_boxing_events.get_cursor();
+//             let boxing_adjust = adjust_boxing_reader.read(adjust_boxing_events).next();
+//             assert!(boxing_adjust.is_none());
+// 
+//             app.world_mut().spawn(CameraBox::LetterBox {
+//                 top: 0,
+//                 bottom: 0,
+//                 strict_letterboxing: false,
+//             });
+// 
+//             let _ = app.world_mut().resource_mut::<ManualTextureViews>();
+//             app.update();
+//             let adjust_boxing_events = app.world().resource::<Messages<AdjustBoxing>>();
+//             let mut adjust_boxing_reader = adjust_boxing_events.get_cursor();
+//             let boxing_adjust = adjust_boxing_reader.read(adjust_boxing_events).next();
+//             assert!(boxing_adjust.is_some());
+//         }
+// 
 
 #[cfg(test)]
 mod tests {
@@ -2049,6 +3529,246 @@ mod tests {
             let mut adjust_boxing_reader = adjust_boxing_events.get_cursor();
             let boxing_adjust = adjust_boxing_reader.read(adjust_boxing_events).next();
             assert!(boxing_adjust.is_some());
+        }
+        #[test]
+        fn test_nesting_two_changes() {
+            let mut app = App::new();
+
+            app.init_resource::<ManualTextureViews>();
+            app.init_resource::<Assets<Image>>();
+            app.world_mut().spawn((
+                Window {
+                    resolution: W720P.into(),
+                    ..Window::default()
+                },
+                PrimaryWindow,
+            ));
+            let camera_id = app
+                .world_mut()
+                .spawn((
+                    Camera {
+                        viewport: None,
+                        is_active: true,
+                        target: RenderTarget::Window(WindowRef::Primary),
+                        ..Camera::default()
+                    },
+                    CameraBox::StaticResolution {
+                        resolution: W360P,
+                        position: None,
+                    },
+                ))
+                .id();
+            let child_id = app
+                .world_mut()
+                .spawn((
+                    CameraBox::StaticResolution {
+                        resolution: W180P,
+                        position: None,
+                    },
+                    NestedWithin(camera_id),
+                ))
+                .id();
+            app.add_systems(First, adjust_viewport);
+            app.update();
+            let viewport = app
+                .world()
+                .get::<Camera>(camera_id)
+                .unwrap()
+                .to_owned()
+                .viewport
+                .unwrap();
+            assert_eq!(viewport.physical_position, UVec2::new(480, 270));
+            assert_eq!(viewport.physical_size, W180P);
+
+            let mut parent_box = app.world_mut().get_mut::<CameraBox>(camera_id).unwrap();
+            *parent_box = CameraBox::StaticResolution {
+                resolution: W360P,
+                position: Some((10, 10).into()),
+            };
+            app.update();
+            let viewport = app
+                .world()
+                .get::<Camera>(camera_id)
+                .unwrap()
+                .to_owned()
+                .viewport
+                .unwrap();
+            assert_eq!(viewport.physical_position, UVec2::new(170, 100));
+            assert_eq!(viewport.physical_size, W180P);
+
+            let mut child_box = app.world_mut().get_mut::<CameraBox>(child_id).unwrap();
+            *child_box = CameraBox::StaticResolution {
+                resolution: W180P,
+                position: Some((10, 10).into()),
+            };
+            app.update();
+            let viewport = app
+                .world()
+                .get::<Camera>(camera_id)
+                .unwrap()
+                .to_owned()
+                .viewport
+                .unwrap();
+            assert_eq!(viewport.physical_position, UVec2::new(20, 20));
+            assert_eq!(viewport.physical_size, W180P);
+
+            let mut parent_box = app.world_mut().get_mut::<CameraBox>(camera_id).unwrap();
+            *parent_box = CameraBox::StaticResolution {
+                resolution: W360P,
+                position: None,
+            };
+            app.update();
+            let viewport = app
+                .world()
+                .get::<Camera>(camera_id)
+                .unwrap()
+                .to_owned()
+                .viewport
+                .unwrap();
+            assert_eq!(viewport.physical_position, UVec2::new(330, 190));
+            assert_eq!(viewport.physical_size, W180P);
+        }
+
+        #[test]
+        fn test_nesting_one_change_no_secondary() {
+            let mut app = App::new();
+
+            app.init_resource::<ManualTextureViews>();
+            app.init_resource::<Assets<Image>>();
+            app.world_mut().spawn((
+                Window {
+                    resolution: W360P.into(),
+                    ..Window::default()
+                },
+                PrimaryWindow,
+            ));
+            let camera_id = app
+                .world_mut()
+                .spawn((
+                    Camera {
+                        viewport: None,
+                        is_active: true,
+                        target: RenderTarget::Window(WindowRef::Primary),
+                        ..Camera::default()
+                    },
+                    CameraBox::StaticResolution {
+                        resolution: W180P,
+                        position: None,
+                    },
+                ))
+                .id();
+            app.world_mut().spawn((
+                CameraBox::StaticResolution {
+                    resolution: W180P,
+                    position: None,
+                },
+                NestedWithin(camera_id),
+            ));
+            app.add_systems(First, adjust_viewport);
+            app.update();
+            let viewport = app
+                .world()
+                .get::<Camera>(camera_id)
+                .unwrap()
+                .to_owned()
+                .viewport
+                .unwrap();
+            assert_eq!(viewport.physical_position, UVec2::new(160, 90));
+            assert_eq!(viewport.physical_size, W180P);
+        }
+
+        #[test]
+        fn test_nesting_one_change_no_primary() {
+            let mut app = App::new();
+
+            app.init_resource::<ManualTextureViews>();
+            app.init_resource::<Assets<Image>>();
+            app.world_mut().spawn((
+                Window {
+                    resolution: W360P.into(),
+                    ..Window::default()
+                },
+                PrimaryWindow,
+            ));
+            let camera_id = app
+                .world_mut()
+                .spawn((
+                    Camera {
+                        viewport: None,
+                        is_active: true,
+                        target: RenderTarget::Window(WindowRef::Primary),
+                        ..Camera::default()
+                    },
+                    CameraBox::StaticResolution {
+                        resolution: W360P,
+                        position: None,
+                    },
+                ))
+                .id();
+            app.world_mut().spawn((
+                CameraBox::StaticResolution {
+                    resolution: W180P,
+                    position: None,
+                },
+                NestedWithin(camera_id),
+            ));
+            app.add_systems(First, adjust_viewport);
+            app.update();
+            let viewport = app
+                .world()
+                .get::<Camera>(camera_id)
+                .unwrap()
+                .to_owned()
+                .viewport
+                .unwrap();
+            assert_eq!(viewport.physical_position, UVec2::new(160, 90));
+            assert_eq!(viewport.physical_size, W180P);
+        }
+
+        #[test]
+        fn test_nesting_no_change() {
+            let mut app = App::new();
+
+            app.init_resource::<ManualTextureViews>();
+            app.init_resource::<Assets<Image>>();
+            app.world_mut().spawn((
+                Window {
+                    resolution: W360P.into(),
+                    ..Window::default()
+                },
+                PrimaryWindow,
+            ));
+            let camera_id = app
+                .world_mut()
+                .spawn((
+                    Camera {
+                        viewport: None,
+                        is_active: true,
+                        target: RenderTarget::Window(WindowRef::Primary),
+                        ..Camera::default()
+                    },
+                    CameraBox::StaticResolution {
+                        resolution: W360P,
+                        position: None,
+                    },
+                ))
+                .id();
+            app.world_mut().spawn((
+                CameraBox::StaticResolution {
+                    resolution: W360P,
+                    position: None,
+                },
+                NestedWithin(camera_id),
+            ));
+            app.add_systems(First, adjust_viewport);
+            app.update();
+            let viewport = app
+                .world()
+                .get::<Camera>(camera_id)
+                .unwrap()
+                .to_owned()
+                .viewport;
+            assert!(viewport.is_none());
         }
     }
 }
