@@ -18,7 +18,7 @@ use bevy_app::{App, First, Plugin};
 use bevy_asset::{AssetEvent, Assets};
 use bevy_ecs::prelude::*;
 use bevy_image::Image;
-use bevy_log::{info, warn};
+use bevy_log::{info, warn, warn_once};
 use bevy_math::{AspectRatio, UVec2, Vec2};
 use bevy_reflect::Reflect;
 use bevy_render::camera::{ManualTextureViews, Viewport};
@@ -221,7 +221,7 @@ fn adjust_viewport(
                     if target.physical_size.x >= offset.x && target.physical_size.y >= offset.y {
                         position
                     } else {
-                        warn!("Unable to place output with resolution {} at position {} within Render Target with size {}. Placing at (0,0) instead", size, position, target.physical_size);
+                        warn_once!("Unable to place output with resolution {} at position {} within Render Target with size {}. Placing at (0,0) instead", size, position, target.physical_size);
                         UVec2::ZERO
                     }
                 };
@@ -268,7 +268,7 @@ fn adjust_viewport(
                         if is_within_rect(&target.physical_size, pos, &viewport.physical_size) {
                             *pos
                         } else {
-                            warn!("Unable to place output with resolution {} at position {} within Render Target with size {}. Placing at (0,0) instead", output_resolution, pos, target.physical_size);
+                            warn_once!("Unable to place output with resolution {} at position {} within Render Target with size {}. Placing at (0,0) instead", output_resolution, pos, target.physical_size);
                             UVec2::ZERO
                         }
                     },
