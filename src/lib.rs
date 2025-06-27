@@ -224,16 +224,16 @@ fn adjust_viewport(
             Some(target) => target,
         };
 
+        let mut viewport = match &mut camera.viewport {
+            None => Viewport::default(),
+            Some(viewport) => viewport.to_owned(),
+        };
+        
         match &camera_box {
             CameraBox::StaticResolution {
                 resolution: size,
                 position,
             } => {
-                let mut viewport = match &mut camera.viewport {
-                    None => Viewport::default(),
-                    Some(viewport) => viewport.to_owned(),
-                };
-
                 if &target.physical_size == size && position.is_none() {
                     camera.viewport = None;
                     continue;
@@ -278,11 +278,6 @@ fn adjust_viewport(
                 aspect_ratio,
                 position,
             } => {
-                let mut viewport = match &mut camera.viewport {
-                    None => Viewport::default(),
-                    Some(viewport) => viewport.to_owned(),
-                };
-
                 let physical_aspect_ratio =
                     match AspectRatio::try_from(target.physical_size.as_vec2()) {
                         Ok(ar) if ar.ratio() == aspect_ratio.ratio() => {
@@ -332,10 +327,6 @@ fn adjust_viewport(
                 allow_imperfect_downscaled_boxing: allow_imperfect_aspect_ratios,
                 resolution,
             } => {
-                let mut viewport = match &mut camera.viewport {
-                    None => Viewport::default(),
-                    Some(viewport) => viewport.to_owned(),
-                };
                 let Boxing {
                     boxing_offset,
                     output_resolution,
@@ -367,11 +358,6 @@ fn adjust_viewport(
                 bottom,
                 strict_letterboxing,
             } => {
-                let mut viewport = match &camera.viewport {
-                    None => Viewport::default(),
-                    Some(viewport) => viewport.to_owned(),
-                };
-
                 let Boxing {
                     mut boxing_offset,
                     mut output_resolution,
@@ -405,11 +391,6 @@ fn adjust_viewport(
                 right,
                 strict_pillarboxing,
             } => {
-                let mut viewport = match &mut camera.viewport {
-                    None => Viewport::default(),
-                    Some(viewport) => viewport.to_owned(),
-                };
-
                 let Boxing {
                     mut boxing_offset,
                     mut output_resolution,
@@ -448,11 +429,6 @@ fn adjust_viewport(
             } => {
                 let letterboxing = (top, bottom);
                 let pillarboxing = (left, right);
-
-                let mut viewport = match &mut camera.viewport {
-                    None => Viewport::default(),
-                    Some(viewport) => viewport.to_owned(),
-                };
 
                 let Boxing {
                     mut boxing_offset,
