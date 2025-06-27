@@ -44,6 +44,16 @@ pub enum CameraBoxSet {
 /// This event is used to tell us that we need to recalculate our Camera Boxes.
 pub struct AdjustBoxing;
 
+#[derive(Component, Reflect, Debug)]
+#[reflect(Component)]
+#[relationship(relationship_target=HasNested)]
+struct NestedWithin(Entity);
+
+#[derive(Component, Reflect, Debug)]
+#[reflect(Component)]
+#[relationship_target(relationship=NestedWithin, linked_spawn)]
+struct HasNested(Entity);
+
 impl Plugin for CameraBoxingPlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<CameraBox>()
@@ -198,6 +208,250 @@ fn camerabox_changed(
     }
 }
 
+enum ViewportChanges {
+    SetToNone,
+    Box(Boxing)
+}
+
+fn calculate_changes(
+    camerabox: &CameraBox,
+    physical_resolution: &UVec2,
+    render_placement: &UVec2,
+    render_size: &UVec2,
+) -> Option<ViewportChanges> {
+    match &camerabox {
+        CameraBox::StaticResolution {
+            resolution,
+            position,
+        } => {
+            if physical_resolution == resolution && position.is_none() {
+                return Some(ViewportChanges::SetToNone);
+            } else if let Some(position) = position {
+                let offset = resolution.clamp(UVec2::ZERO, *physical_resolution) + position;
+                if (physical_resolution.x < offset.x || physical_resolution.y < offset.y)
+                    && render_placement == &UVec2::ZERO
+                {
+                    return None;
+                }
+            }
+
+            let clamped_resolution = if render_size != resolution {
+                &resolution.clamp(UVec2::ONE, *physical_resolution)
+            } else {
+                resolution
+            };
+
+            let render_placement = if position.is_none() {
+                (physical_resolution - resolution.clamp(UVec2::ZERO, *physical_resolution)) / 2
+            } else {
+                let position = position.unwrap();
+                let offset = resolution.clamp(UVec2::ZERO, *physical_resolution) + position;
+                if physical_resolution.x >= offset.x && physical_resolution.y >= offset.y {
+                    position
+                } else {
+                    warn_once!(
+                        "Unable to place output with resolution {} at position {} within Render Target with size {}. Placing at (0,0) instead",
+                        resolution,
+                        position,
+                        physical_resolution
+                    );
+                    UVec2::ZERO
+                }
+            };
+            Some(ViewportChanges::Box(Boxing {
+                boxing_offset: render_placement.as_vec2(),
+                output_resolution: clamped_resolution.as_vec2(),
+            }))
+        }
+        CameraBox::StaticAspectRatio {
+            aspect_ratio,
+            position,
+        } => {
+            let physical_aspect_ratio = match AspectRatio::try_from(physical_resolution.as_vec2()) {
+                Ok(ar) if ar.ratio() == aspect_ratio.ratio() => {
+                    return Some(ViewportChanges::SetToNone);
+                }
+                Err(e) => {
+                    warn!(
+                        "Error occurred when calculating aspect ratios for scaling: {:?}",
+                        e
+                    );
+                    return None;
+                }
+                Ok(ar) => ar,
+            };
+
+            let Boxing {
+                boxing_offset,
+                output_resolution,
+            } = calculate_boxing_from_aspect_ratios(
+                &physical_resolution.as_vec2(),
+                &physical_aspect_ratio,
+                aspect_ratio,
+            );
+
+            Some(ViewportChanges::Box(Boxing {
+                output_resolution,
+                boxing_offset: match position {
+                    None => boxing_offset,
+                    Some(pos) => {
+                        if is_within_rect(physical_resolution, pos, render_size) {
+                            pos.as_vec2()
+                        } else {
+                            warn_once!(
+                                "Unable to place output with resolution {} at position {} within Render Target with size {}. Placing at (0,0) instead",
+                                output_resolution,
+                                pos,
+                                physical_resolution,
+                            );
+                            Vec2::ZERO
+                        }
+                    }
+                },
+            }))
+        }
+        CameraBox::ResolutionIntegerScale {
+            resolution,
+            allow_imperfect_downscaled_boxing,
+        } => {
+            match if *allow_imperfect_downscaled_boxing {
+                calculate_boxing_imperfect(&physical_resolution.as_vec2(), resolution)
+            } else {
+                calculate_boxing_perfect(&physical_resolution.as_vec2(), resolution)
+            } {
+                Ok(None) => Some(ViewportChanges::SetToNone),
+                Ok(Some(t)) => Some(ViewportChanges::Box(t)),
+                Err(e) => {
+                    warn!(
+                        "Error occurred when calculating aspect ratios for scaling: {:?}",
+                        e
+                    );
+                    None
+                }
+            }
+        }
+        CameraBox::LetterBox {
+            top,
+            bottom,
+            strict_letterboxing,
+        } => {
+            let Boxing {
+                mut boxing_offset,
+                mut output_resolution,
+            } = calculate_letterbox(&physical_resolution.as_vec2(), (top, bottom));
+            if (output_resolution.y + boxing_offset.y > physical_resolution.y as f32
+                || output_resolution.y <= 0.)
+                && !strict_letterboxing
+            {
+                output_resolution.y = physical_resolution.y as f32 / 2.;
+                boxing_offset.y /= 2.;
+                let scale_factor =
+                    (physical_resolution.y as f32) / (output_resolution.y + boxing_offset.y);
+                boxing_offset.y *= scale_factor;
+            }
+
+            if (output_resolution.y <= 0.
+                || output_resolution.y > physical_resolution.y as f32
+                || output_resolution.y + boxing_offset.y > physical_resolution.y as f32)
+                && *strict_letterboxing
+            {
+                return Some(ViewportChanges::SetToNone);
+            }
+
+            Some(ViewportChanges::Box(Boxing {
+                boxing_offset,
+                output_resolution,
+            }))
+        }
+        CameraBox::PillarBox {
+            left,
+            right,
+            strict_pillarboxing,
+        } => {
+            let Boxing {
+                mut boxing_offset,
+                mut output_resolution,
+            } = calculate_pillarbox(&physical_resolution.as_vec2(), (left, right));
+
+            if (output_resolution.x + boxing_offset.x > physical_resolution.x as f32
+                || output_resolution.x <= 0.)
+                && !strict_pillarboxing
+            {
+                output_resolution.x = physical_resolution.x as f32 / 2.;
+                boxing_offset.x /= 2.;
+                let scale_factor =
+                    (physical_resolution.x as f32) / (output_resolution.x + boxing_offset.x);
+                boxing_offset.x *= scale_factor;
+            }
+
+            if output_resolution.x <= 0.
+                || output_resolution.x > physical_resolution.x as f32
+                || output_resolution.x + boxing_offset.x > physical_resolution.x as f32
+                    && *strict_pillarboxing
+            {
+                return Some(ViewportChanges::SetToNone);
+            }
+
+            Some(ViewportChanges::Box(Boxing {
+                boxing_offset,
+                output_resolution,
+            }))
+        }
+        CameraBox::WindowBox {
+            left,
+            right,
+            top,
+            bottom,
+            strict_windowboxing,
+        } => {
+            let letterboxing = (top, bottom);
+            let pillarboxing = (left, right);
+
+            let Boxing {
+                mut boxing_offset,
+                mut output_resolution,
+            } = calculate_windowbox(&physical_resolution.as_vec2(), [letterboxing, pillarboxing]);
+
+            if *strict_windowboxing {
+                if output_resolution.x <= 0.
+                    || !is_within_rect(
+                        physical_resolution,
+                        &boxing_offset.as_uvec2(),
+                        &output_resolution.as_uvec2(),
+                    )
+                {
+                    return Some(ViewportChanges::SetToNone);
+                }
+            } else {
+                if output_resolution.x + boxing_offset.x > physical_resolution.x as f32
+                    || output_resolution.x <= 0.
+                {
+                    output_resolution.x = physical_resolution.x as f32 / 2.;
+                    boxing_offset.x /= 2.;
+                    let scale_factor =
+                        (physical_resolution.x as f32) / (output_resolution.x + boxing_offset.x);
+                    boxing_offset.x *= scale_factor;
+                }
+
+                if output_resolution.y + boxing_offset.y > physical_resolution.y as f32
+                    || output_resolution.y <= 0.
+                {
+                    output_resolution.y = physical_resolution.y as f32 / 2.;
+                    boxing_offset.y /= 2.;
+                    let scale_factor =
+                        (physical_resolution.y as f32) / (output_resolution.y + boxing_offset.y);
+                    boxing_offset.y *= scale_factor;
+                }
+            }
+
+            Some(ViewportChanges::Box(Boxing {
+                output_resolution,
+                boxing_offset,
+            }))
+        }
+    }
+}
+
 fn adjust_viewport(
     mut boxed_cameras: Query<(&mut Camera, &CameraBox)>,
     primary_window: Option<Single<Entity, With<PrimaryWindow>>>,
@@ -223,283 +477,26 @@ fn adjust_viewport(
             }
             Some(target) => target,
         };
-
-        match &camera_box {
-            CameraBox::StaticResolution {
-                resolution: size,
-                position,
-            } => {
-                let mut viewport = match &mut camera.viewport {
-                    None => Viewport::default(),
-                    Some(viewport) => viewport.to_owned(),
-                };
-
-                if &target.physical_size == size && position.is_none() {
-                    camera.viewport = None;
-                    continue;
-                } else if position.is_some() {
-                    let position = position.unwrap();
-                    let offset = size.clamp(UVec2::ZERO, target.physical_size) + position;
-                    if (target.physical_size.x < offset.x || target.physical_size.y < offset.y)
-                        && viewport.physical_position == UVec2::ZERO
-                    {
-                        continue;
-                    }
-                }
-
-                if &viewport.physical_size != size {
-                    viewport.physical_size = size.clamp(UVec2::ONE, target.physical_size);
-                }
-
-                viewport.physical_position = if position.is_none() {
-                    (target.physical_size
-                        - viewport
-                            .physical_size
-                            .clamp(UVec2::ZERO, target.physical_size))
-                        / 2
-                } else {
-                    let position = position.unwrap();
-                    let offset = size.clamp(UVec2::ZERO, target.physical_size) + position;
-                    if target.physical_size.x >= offset.x && target.physical_size.y >= offset.y {
-                        position
-                    } else {
-                        warn_once!(
-                            "Unable to place output with resolution {} at position {} within Render Target with size {}. Placing at (0,0) instead",
-                            size,
-                            position,
-                            target.physical_size
-                        );
-                        UVec2::ZERO
-                    }
-                };
-                camera.viewport = Some(viewport);
+        
+        let mut viewport = match &camera.viewport {
+            None => Viewport::default(),
+            Some(vp) => vp.clone()
+        };
+        
+        match calculate_changes(camera_box, &target.physical_size, &viewport.physical_position, &viewport.physical_size) {
+            None => {
+                continue
+            } 
+            Some(ViewportChanges::SetToNone) => {
+                camera.viewport = None;
             }
-            CameraBox::StaticAspectRatio {
-                aspect_ratio,
-                position,
-            } => {
-                let mut viewport = match &mut camera.viewport {
-                    None => Viewport::default(),
-                    Some(viewport) => viewport.to_owned(),
-                };
-
-                let physical_aspect_ratio =
-                    match AspectRatio::try_from(target.physical_size.as_vec2()) {
-                        Ok(ar) if ar.ratio() == aspect_ratio.ratio() => {
-                            camera.viewport = None;
-                            continue;
-                        }
-                        Err(e) => {
-                            warn!(
-                                "Error occurred when calculating aspect ratios for scaling: {:?}",
-                                e
-                            );
-                            continue;
-                        }
-                        Ok(ar) => ar,
-                    };
-
-                let Boxing {
-                    boxing_offset,
-                    output_resolution,
-                } = calculate_boxing_from_aspect_ratios(
-                    &target.physical_size.as_vec2(),
-                    &physical_aspect_ratio,
-                    aspect_ratio,
-                );
-
+            Some(ViewportChanges::Box(Boxing { boxing_offset, output_resolution })) => {
                 viewport.physical_size = output_resolution.as_uvec2();
-                viewport.physical_position = match position {
-                    None => boxing_offset.as_uvec2(),
-                    Some(pos) => {
-                        if is_within_rect(&target.physical_size, pos, &viewport.physical_size) {
-                            *pos
-                        } else {
-                            warn_once!(
-                                "Unable to place output with resolution {} at position {} within Render Target with size {}. Placing at (0,0) instead",
-                                output_resolution,
-                                pos,
-                                target.physical_size
-                            );
-                            UVec2::ZERO
-                        }
-                    }
-                };
-                camera.viewport = Some(viewport);
-            }
-
-            CameraBox::ResolutionIntegerScale {
-                allow_imperfect_downscaled_boxing: allow_imperfect_aspect_ratios,
-                resolution,
-            } => {
-                let mut viewport = match &mut camera.viewport {
-                    None => Viewport::default(),
-                    Some(viewport) => viewport.to_owned(),
-                };
-                let Boxing {
-                    boxing_offset,
-                    output_resolution,
-                } = match if *allow_imperfect_aspect_ratios {
-                    calculate_boxing_imperfect(&target.physical_size.as_vec2(), resolution)
-                } else {
-                    calculate_boxing_perfect(&target.physical_size.as_vec2(), resolution)
-                } {
-                    Ok(None) => {
-                        camera.viewport = None;
-                        continue;
-                    }
-                    Ok(Some(t)) => t,
-                    Err(e) => {
-                        warn!(
-                            "Error occurred when calculating aspect ratios for scaling: {:?}",
-                            e
-                        );
-                        continue;
-                    }
-                };
-
                 viewport.physical_position = boxing_offset.as_uvec2();
-                viewport.physical_size = output_resolution.as_uvec2();
+
                 camera.viewport = Some(viewport);
             }
-            CameraBox::LetterBox {
-                top,
-                bottom,
-                strict_letterboxing,
-            } => {
-                let mut viewport = match &camera.viewport {
-                    None => Viewport::default(),
-                    Some(viewport) => viewport.to_owned(),
-                };
-
-                let Boxing {
-                    mut boxing_offset,
-                    mut output_resolution,
-                } = calculate_letterbox(&target.physical_size.as_vec2(), (top, bottom));
-                if (output_resolution.y + boxing_offset.y > target.physical_size.y as f32
-                    || output_resolution.y <= 0.)
-                    && !strict_letterboxing
-                {
-                    output_resolution.y = target.physical_size.y as f32 / 2.;
-                    boxing_offset.y /= 2.;
-                    let scale_factor =
-                        (target.physical_size.y as f32) / (output_resolution.y + boxing_offset.y);
-                    boxing_offset.y *= scale_factor;
-                }
-
-                if (output_resolution.y <= 0.
-                    || output_resolution.y > target.physical_size.y as f32
-                    || output_resolution.y + boxing_offset.y > target.physical_size.y as f32)
-                    && *strict_letterboxing
-                {
-                    camera.viewport = None;
-                    continue;
-                }
-
-                viewport.physical_position = boxing_offset.as_uvec2();
-                viewport.physical_size = output_resolution.as_uvec2();
-                camera.viewport = Some(viewport);
-            }
-            CameraBox::PillarBox {
-                left,
-                right,
-                strict_pillarboxing,
-            } => {
-                let mut viewport = match &mut camera.viewport {
-                    None => Viewport::default(),
-                    Some(viewport) => viewport.to_owned(),
-                };
-
-                let Boxing {
-                    mut boxing_offset,
-                    mut output_resolution,
-                } = calculate_pillarbox(&target.physical_size.as_vec2(), (left, right));
-
-                if (output_resolution.x + boxing_offset.x > target.physical_size.x as f32
-                    || output_resolution.x <= 0.)
-                    && !strict_pillarboxing
-                {
-                    output_resolution.x = target.physical_size.x as f32 / 2.;
-                    boxing_offset.x /= 2.;
-                    let scale_factor =
-                        (target.physical_size.x as f32) / (output_resolution.x + boxing_offset.x);
-                    boxing_offset.x *= scale_factor;
-                }
-
-                if output_resolution.x <= 0.
-                    || output_resolution.x > target.physical_size.x as f32
-                    || output_resolution.x + boxing_offset.x > target.physical_size.x as f32
-                        && *strict_pillarboxing
-                {
-                    camera.viewport = None;
-                    continue;
-                }
-
-                viewport.physical_position = boxing_offset.as_uvec2();
-                viewport.physical_size = output_resolution.as_uvec2();
-                camera.viewport = Some(viewport);
-            }
-            CameraBox::WindowBox {
-                left,
-                right,
-                top,
-                bottom,
-                strict_windowboxing,
-            } => {
-                let letterboxing = (top, bottom);
-                let pillarboxing = (left, right);
-
-                let mut viewport = match &mut camera.viewport {
-                    None => Viewport::default(),
-                    Some(viewport) => viewport.to_owned(),
-                };
-
-                let Boxing {
-                    mut boxing_offset,
-                    mut output_resolution,
-                } = calculate_windowbox(
-                    &target.physical_size.as_vec2(),
-                    [letterboxing, pillarboxing],
-                );
-
-                if *strict_windowboxing {
-                    if output_resolution.x <= 0.
-                        || !is_within_rect(
-                            &target.physical_size,
-                            &boxing_offset.as_uvec2(),
-                            &output_resolution.as_uvec2(),
-                        )
-                    {
-                        camera.viewport = None;
-                        continue;
-                    }
-                } else {
-                    if output_resolution.x + boxing_offset.x > target.physical_size.x as f32
-                        || output_resolution.x <= 0.
-                    {
-                        output_resolution.x = target.physical_size.x as f32 / 2.;
-                        boxing_offset.x /= 2.;
-                        let scale_factor = (target.physical_size.x as f32)
-                            / (output_resolution.x + boxing_offset.x);
-                        boxing_offset.x *= scale_factor;
-                    }
-
-                    if output_resolution.y + boxing_offset.y > target.physical_size.y as f32
-                        || output_resolution.y <= 0.
-                    {
-                        output_resolution.y = target.physical_size.y as f32 / 2.;
-                        boxing_offset.y /= 2.;
-                        let scale_factor = (target.physical_size.y as f32)
-                            / (output_resolution.y + boxing_offset.y);
-                        boxing_offset.y *= scale_factor;
-                    }
-                }
-
-                viewport.physical_position = boxing_offset.as_uvec2();
-                viewport.physical_size = output_resolution.as_uvec2();
-                camera.viewport = Some(viewport);
-            }
-        }
+        };
     }
 }
 
