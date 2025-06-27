@@ -28,35 +28,54 @@ use bevy_window::{PrimaryWindow, Window};
 /// The Plugin that adds in all the systems for camera-boxing.
 pub struct CameraBoxingPlugin;
 
+/// The system set provided and used by the plugin for ordering.
+#[derive(SystemSet, Copy, Clone, Eq, PartialEq, Hash, Debug)]
+pub enum CameraBoxSet {
+    /// Detect changes that might require us to recalculate boxes.
+    /// This runs before RecalculateBoxes
+    DetectChanges,
+
+    /// Recalculate the Aspect Ratio Masks/CameraBoxes.
+    /// This runs after DetectChanges
+    RecalculateBoxes,
+}
+
+#[derive(Event)]
+/// This event is used to tell us that we need to recalculate our Camera Boxes.
+pub struct AdjustBoxing;
+
 impl Plugin for CameraBoxingPlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<CameraBox>()
             .add_event::<AdjustBoxing>()
-            .add_systems(
+            .configure_sets(
                 First,
-                (windows_changed, camerabox_changed).run_if(any_with_component::<CameraBox>),
-            )
-            .add_systems(
-                First,
-                images_changed.run_if(any_with_component::<CameraBox>.and(
-                    on_event::<AssetEvent<Image>>.or(resource_changed_or_removed::<Assets<Image>>),
-                )),
-            )
-            .add_systems(
-                First,
-                texture_views_changed.run_if(
-                    any_with_component::<CameraBox>
-                        .and(resource_changed_or_removed::<ManualTextureViews>),
+                (
+                    CameraBoxSet::DetectChanges.run_if(any_with_component::<CameraBox>),
+                    CameraBoxSet::RecalculateBoxes
+                        .run_if(on_event::<AdjustBoxing>)
+                        .after(CameraBoxSet::DetectChanges),
                 ),
             )
             .add_systems(
                 First,
-                adjust_viewport
-                    .run_if(on_event::<AdjustBoxing>)
-                    .after(camerabox_changed)
-                    .after(windows_changed)
-                    .after(images_changed)
-                    .after(texture_views_changed),
+                (windows_changed, camerabox_changed).in_set(CameraBoxSet::DetectChanges),
+            )
+            .add_systems(
+                First,
+                images_changed.in_set(CameraBoxSet::DetectChanges).run_if(
+                    on_event::<AssetEvent<Image>>.or(resource_changed_or_removed::<Assets<Image>>),
+                ),
+            )
+            .add_systems(
+                First,
+                texture_views_changed
+                    .in_set(CameraBoxSet::DetectChanges)
+                    .run_if(resource_changed_or_removed::<ManualTextureViews>),
+            )
+            .add_systems(
+                First,
+                adjust_viewport.in_set(CameraBoxSet::RecalculateBoxes),
             );
     }
 }
@@ -152,9 +171,6 @@ pub enum CameraBox {
         strict_windowboxing: bool,
     },
 }
-
-#[derive(Event)]
-struct AdjustBoxing;
 
 fn windows_changed(
     mut boxing_event: EventWriter<AdjustBoxing>,

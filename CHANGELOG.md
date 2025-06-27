@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setting a position that can't be accommodated in `CameraBox::StaticResolution` will set the position to (0,0) and trigger a warning.
 - Setting a position that can't be accommodated in `CameraBox::StaticAspectRatio` will set the position to (0,0) and trigger a warning.
 - Add in Integration Testing
+- Add in `CameraBoxingSet` System Set, which has two variants, which can be used for ordering.
+- Make `AdjustBoxing` event public.
 
 ## [0.1.1] - 2025-06-22  
 - Added Logging instead of skipping errors and other issues.
