@@ -47,12 +47,14 @@ pub struct AdjustBoxing;
 #[derive(Component, Reflect, Debug)]
 #[reflect(Component)]
 #[relationship(relationship_target=HasNested)]
-struct NestedWithin(Entity);
+/// This is used to denote that a CameraBox is 'nested within' another camera box.
+/// Use this if you want to add on the effect of another CameraBox onto a CameraBox.
+pub struct NestedWithin(Entity);
 
 #[derive(Component, Reflect, Debug)]
 #[reflect(Component)]
 #[relationship_target(relationship=NestedWithin, linked_spawn)]
-struct HasNested(Entity);
+pub struct HasNested(Entity);
 
 impl Plugin for CameraBoxingPlugin {
     fn build(&self, app: &mut App) {
@@ -210,7 +212,7 @@ fn camerabox_changed(
 
 enum ViewportChanges {
     SetToNone,
-    Box(Boxing)
+    Box(Boxing),
 }
 
 fn calculate_changes(
@@ -320,14 +322,13 @@ fn calculate_changes(
                 calculate_boxing_perfect(&physical_resolution.as_vec2(), resolution)
             } {
                 Ok(None) => Some(ViewportChanges::SetToNone),
-                Ok(Some(Boxing { boxing_offset, output_resolution })) => Some(
-                    ViewportChanges::Box(
-                        Boxing {
-                            boxing_offset: render_placement.as_vec2() + boxing_offset,
-                            output_resolution
-                        }
-                    )
-                ),
+                Ok(Some(Boxing {
+                    boxing_offset,
+                    output_resolution,
+                })) => Some(ViewportChanges::Box(Boxing {
+                    boxing_offset: render_placement.as_vec2() + boxing_offset,
+                    output_resolution,
+                })),
                 Err(e) => {
                     warn!(
                         "Error occurred when calculating aspect ratios for scaling: {:?}",
@@ -472,7 +473,7 @@ fn adjust_viewport(
         if !camera.is_active {
             continue;
         }
-        
+
         let target = camera.target.normalize(primary_window);
         let target = match target
             .and_then(|t| t.get_render_target_info(windows, &images, &texture_views))
@@ -485,16 +486,19 @@ fn adjust_viewport(
             }
             Some(target) => target,
         };
-        
+
         let mut viewport = match &camera.viewport {
             None => Viewport::default(),
-            Some(vp) => vp.clone()
+            Some(vp) => vp.clone(),
         };
-        
-        match calculate_changes(camera_box, &target.physical_size, &UVec2::ZERO, &viewport.physical_size) {
-            None => {
-                continue
-            } 
+
+        match calculate_changes(
+            camera_box,
+            &target.physical_size,
+            &UVec2::ZERO,
+            &viewport.physical_size,
+        ) {
+            None => continue,
             Some(ViewportChanges::SetToNone) => {
                 let mut current_child = nested_box;
                 let mut actually_none = true;
@@ -503,10 +507,15 @@ fn adjust_viewport(
                 while let Some(child) = current_child {
                     let (actual_child, next) = match loose_boxes.get(child.0) {
                         Err(_) => continue,
-                        Ok(c) => c
+                        Ok(c) => c,
                     };
 
-                    match calculate_changes(actual_child, &output_resolution.as_uvec2(), &boxing_offset.as_uvec2(), &output_resolution.as_uvec2()) {
+                    match calculate_changes(
+                        actual_child,
+                        &output_resolution.as_uvec2(),
+                        &boxing_offset.as_uvec2(),
+                        &output_resolution.as_uvec2(),
+                    ) {
                         None => break,
                         Some(ViewportChanges::SetToNone) => (),
                         Some(ViewportChanges::Box(boxing)) => {
@@ -525,15 +534,23 @@ fn adjust_viewport(
                     camera.viewport = Some(viewport);
                 }
             }
-            Some(ViewportChanges::Box(Boxing { mut boxing_offset, mut output_resolution })) => {
+            Some(ViewportChanges::Box(Boxing {
+                mut boxing_offset,
+                mut output_resolution,
+            })) => {
                 let mut current_child = nested_box;
                 while let Some(child) = current_child {
                     let (actual_child, next) = match loose_boxes.get(child.0) {
                         Err(_) => continue,
-                        Ok(c) => c
+                        Ok(c) => c,
                     };
-                    
-                    match calculate_changes(actual_child, &output_resolution.as_uvec2(), &boxing_offset.as_uvec2(), &output_resolution.as_uvec2()) {
+
+                    match calculate_changes(
+                        actual_child,
+                        &output_resolution.as_uvec2(),
+                        &boxing_offset.as_uvec2(),
+                        &output_resolution.as_uvec2(),
+                    ) {
                         None => break,
                         Some(ViewportChanges::SetToNone) => (),
                         Some(ViewportChanges::Box(boxing)) => {
@@ -2117,7 +2134,7 @@ mod tests {
             let boxing_adjust = adjust_boxing_reader.read(adjust_boxing_events).next();
             assert!(boxing_adjust.is_some());
         }
-        
+
         #[test]
         fn test_nesting_two_changes() {
             let mut app = App::new();
@@ -2146,18 +2163,17 @@ mod tests {
                     },
                 ))
                 .id();
-            let child_id = app.world_mut()
+            let child_id = app
+                .world_mut()
                 .spawn((
                     CameraBox::StaticResolution {
                         resolution: W180P,
                         position: None,
                     },
-                    NestedWithin(camera_id)
-                )).id();
-            app.add_systems(
-                First,
-                adjust_viewport
-            );
+                    NestedWithin(camera_id),
+                ))
+                .id();
+            app.add_systems(First, adjust_viewport);
             app.update();
             let viewport = app
                 .world()
@@ -2184,7 +2200,7 @@ mod tests {
                 .unwrap();
             assert_eq!(viewport.physical_position, UVec2::new(170, 100));
             assert_eq!(viewport.physical_size, W180P);
-            
+
             let mut child_box = app.world_mut().get_mut::<CameraBox>(child_id).unwrap();
             *child_box = CameraBox::StaticResolution {
                 resolution: W180P,
@@ -2200,7 +2216,7 @@ mod tests {
                 .unwrap();
             assert_eq!(viewport.physical_position, UVec2::new(20, 20));
             assert_eq!(viewport.physical_size, W180P);
-            
+
             let mut parent_box = app.world_mut().get_mut::<CameraBox>(camera_id).unwrap();
             *parent_box = CameraBox::StaticResolution {
                 resolution: W360P,
@@ -2217,7 +2233,7 @@ mod tests {
             assert_eq!(viewport.physical_position, UVec2::new(330, 190));
             assert_eq!(viewport.physical_size, W180P);
         }
-        
+
         #[test]
         fn test_nesting_one_change_no_secondary() {
             let mut app = App::new();
@@ -2246,18 +2262,14 @@ mod tests {
                     },
                 ))
                 .id();
-            app.world_mut()
-                .spawn((
-                    CameraBox::StaticResolution {
-                        resolution: W180P,
-                        position: None,
-                    },
-                    NestedWithin(camera_id)
-                ));
-            app.add_systems(
-                First,
-                adjust_viewport
-            );
+            app.world_mut().spawn((
+                CameraBox::StaticResolution {
+                    resolution: W180P,
+                    position: None,
+                },
+                NestedWithin(camera_id),
+            ));
+            app.add_systems(First, adjust_viewport);
             app.update();
             let viewport = app
                 .world()
@@ -2269,7 +2281,7 @@ mod tests {
             assert_eq!(viewport.physical_position, UVec2::new(160, 90));
             assert_eq!(viewport.physical_size, W180P);
         }
-        
+
         #[test]
         fn test_nesting_one_change_no_primary() {
             let mut app = App::new();
@@ -2298,18 +2310,14 @@ mod tests {
                     },
                 ))
                 .id();
-            app.world_mut()
-                .spawn((
-                    CameraBox::StaticResolution {
-                        resolution: W180P,
-                        position: None,
-                    },
-                    NestedWithin(camera_id)
-                ));
-            app.add_systems(
-                First,
-                adjust_viewport
-            );
+            app.world_mut().spawn((
+                CameraBox::StaticResolution {
+                    resolution: W180P,
+                    position: None,
+                },
+                NestedWithin(camera_id),
+            ));
+            app.add_systems(First, adjust_viewport);
             app.update();
             let viewport = app
                 .world()
@@ -2321,7 +2329,7 @@ mod tests {
             assert_eq!(viewport.physical_position, UVec2::new(160, 90));
             assert_eq!(viewport.physical_size, W180P);
         }
-        
+
         #[test]
         fn test_nesting_no_change() {
             let mut app = App::new();
@@ -2350,18 +2358,14 @@ mod tests {
                     },
                 ))
                 .id();
-            app.world_mut()
-                .spawn((
-                    CameraBox::StaticResolution {
-                        resolution: W360P,
-                        position: None,
-                    },
-                    NestedWithin(camera_id)
-                ));
-            app.add_systems(
-                First,
-                adjust_viewport
-            );
+            app.world_mut().spawn((
+                CameraBox::StaticResolution {
+                    resolution: W360P,
+                    position: None,
+                },
+                NestedWithin(camera_id),
+            ));
+            app.add_systems(First, adjust_viewport);
             app.update();
             let viewport = app
                 .world()
@@ -2371,6 +2375,5 @@ mod tests {
                 .viewport;
             assert!(viewport.is_none());
         }
-        
     }
 }
