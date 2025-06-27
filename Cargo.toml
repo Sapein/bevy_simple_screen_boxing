@@ -7,6 +7,7 @@ keywords = ["bevy", "letterbox", "camera"]
 license = "MIT OR Apache-2.0"
 description = "A simple, but small, crate that aims to make Letter/Pillar Boxing in Bevy easy."
 repository = "https://github.com/Sapein/bevy_simple_screen_boxing"
+exclude = ["tests"]
 readme = "README.md"
 
 [dependencies]
@@ -19,3 +20,6 @@ bevy_image = { version ="0.16", default-features = false }
 bevy_render = { version ="0.16", default-features = false }
 bevy_window = { version = "0.16", default-features = false }
 bevy_log = { version = "0.16", default-features = false }
+
+[dev-dependencies]
+bevy = {version = "0.16"}
