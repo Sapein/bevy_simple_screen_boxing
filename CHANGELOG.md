@@ -14,7 +14,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The Camera Change Detection System has been removed, as it would constantly trigger the moment the plugin boxed something.
 - Setting a position that can't be accommodated in `CameraBox::StaticResolution` will set the position to (0,0) and trigger a warning.
 - Setting a position that can't be accommodated in `CameraBox::StaticAspectRatio` will set the position to (0,0) and trigger a warning.
-- Add in Integration Testing
 - Add in `CameraBoxingSet` System Set, which has two variants, which can be used for ordering.
 - Make `AdjustBoxing` event public.
 
