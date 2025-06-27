@@ -59,9 +59,9 @@ fn setup(mut commands: Command) {
 - If you use multiple cameras, only one clear color can be displayed at once, even if they have different viewports.
 
 ## Supported Bevy Versions
-| Bevy Resolution Version | Bevy Version |
-|:-----------------------:|:------------:|
-|          0.1.0          |     0.16     |
+| Bevy Simple Screen Boxing Version | Bevy Version |
+|:---------------------------------:|:------------:|
+|                0.1                |     0.16     |
 
 ## Acknowledgements  
 I just want to thank the people who gave feedback on the initial Issue/PR even if it didn't make it in. That feedback
