@@ -5,7 +5,7 @@
 //! It provides ways to set a singular static resolution or aspect ratio, to always ensure the output
 //! is at a resolution that is an integer scale, or provide manually specified letter/pillarboxing.
 //!
-//! This crate requires bevy version `0.16`
+//! This crate requires bevy version `0.17.0-rc.1`
 //!
 //! ## Features
 //! - Provides an easy, but powerful, API for camera boxing!
@@ -21,8 +21,10 @@ use bevy_image::Image;
 use bevy_log::{info, warn, warn_once};
 use bevy_math::{AspectRatio, UVec2, Vec2};
 use bevy_reflect::Reflect;
-use bevy_render::camera::{ManualTextureViews, Viewport};
-use bevy_render::prelude::*;
+use bevy_render::texture::ManualTextureViews;
+use bevy_camera::prelude::*;
+use bevy_camera::Viewport;
+use bevy_render::camera::NormalizedRenderTargetExt;
 use bevy_window::{PrimaryWindow, Window};
 
 /// The Plugin that adds in all the systems for camera-boxing.
@@ -40,20 +42,20 @@ pub enum CameraBoxSet {
     RecalculateBoxes,
 }
 
-#[derive(Event)]
+#[derive(Message)]
 /// This event is used to tell us that we need to recalculate our Camera Boxes.
 pub struct AdjustBoxing;
 
 impl Plugin for CameraBoxingPlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<CameraBox>()
-            .add_event::<AdjustBoxing>()
+            .add_message::<AdjustBoxing>()
             .configure_sets(
                 First,
                 (
                     CameraBoxSet::DetectChanges.run_if(any_with_component::<CameraBox>),
                     CameraBoxSet::RecalculateBoxes
-                        .run_if(on_event::<AdjustBoxing>)
+                        .run_if(on_message::<AdjustBoxing>)
                         .after(CameraBoxSet::DetectChanges),
                 ),
             )
@@ -64,7 +66,7 @@ impl Plugin for CameraBoxingPlugin {
             .add_systems(
                 First,
                 images_changed.in_set(CameraBoxSet::DetectChanges).run_if(
-                    on_event::<AssetEvent<Image>>.or(resource_changed_or_removed::<Assets<Image>>),
+                    on_message::<AssetEvent<Image>>.or(resource_changed_or_removed::<Assets<Image>>),
                 ),
             )
             .add_systems(
@@ -173,7 +175,7 @@ pub enum CameraBox {
 }
 
 fn windows_changed(
-    mut boxing_event: EventWriter<AdjustBoxing>,
+    mut boxing_event: MessageWriter<AdjustBoxing>,
     window: Query<&Window, Changed<Window>>,
 ) {
     if !window.is_empty() {
@@ -181,16 +183,16 @@ fn windows_changed(
     }
 }
 
-fn images_changed(mut boxing_event: EventWriter<AdjustBoxing>) {
+fn images_changed(mut boxing_event: MessageWriter<AdjustBoxing>) {
     boxing_event.write(AdjustBoxing);
 }
 
-fn texture_views_changed(mut boxing_event: EventWriter<AdjustBoxing>) {
+fn texture_views_changed(mut boxing_event: MessageWriter<AdjustBoxing>) {
     boxing_event.write(AdjustBoxing);
 }
 
 fn camerabox_changed(
-    mut boxing_event: EventWriter<AdjustBoxing>,
+    mut boxing_event: MessageWriter<AdjustBoxing>,
     boxes: Query<&CameraBox, Changed<CameraBox>>,
 ) {
     if !boxes.is_empty() {
@@ -213,7 +215,7 @@ fn adjust_viewport(
         let target = camera.target.normalize(primary_window);
 
         let target = match target
-            .and_then(|t| t.get_render_target_info(windows, &images, &texture_views))
+            .and_then(|t| Some(t.get_render_target_info(windows, &images, &texture_views)))
         {
             None => {
                 info!(
@@ -221,7 +223,11 @@ fn adjust_viewport(
                 );
                 continue;
             }
-            Some(target) => target,
+            Some(Err(e)) => {
+                warn_once!("Missing Render Target Info: {:#?}", e);
+                continue;
+            }
+            Some(Ok(target)) => target,
         };
 
         let mut viewport = match &mut camera.viewport {
@@ -974,7 +980,7 @@ mod tests {
     mod systems {
         use super::*;
         use bevy_asset::AssetId;
-        use bevy_render::camera::RenderTarget;
+        use bevy_camera::RenderTarget;
         use bevy_window::{WindowRef, WindowResolution};
 
         const W360P: UVec2 = UVec2::new(640, 360);
@@ -1019,7 +1025,7 @@ mod tests {
                     bottom: 10,
                     strict_windowboxing: false,
                 },
-                W360P.as_vec2().into(),
+                W360P.into(),
             );
             app.update();
             let viewport = app
@@ -1040,7 +1046,7 @@ mod tests {
                     bottom: 10,
                     strict_windowboxing: true,
                 },
-                W360P.as_vec2().into(),
+                W360P.into(),
             );
             app.update();
             let viewport = app
@@ -1061,7 +1067,7 @@ mod tests {
                     bottom: 0,
                     strict_windowboxing: true,
                 },
-                W360P.as_vec2().into(),
+                W360P.into(),
             );
             app.update();
             let viewport = app
@@ -1080,7 +1086,7 @@ mod tests {
                     bottom: 0,
                     strict_windowboxing: false,
                 },
-                W360P.as_vec2().into(),
+                W360P.into(),
             );
             app.update();
             let viewport = app
@@ -1102,7 +1108,7 @@ mod tests {
                     right: 2,
                     strict_pillarboxing: false,
                 },
-                W360P.as_vec2().into(),
+                W360P.into(),
             );
             app.update();
             let viewport = app
@@ -1121,7 +1127,7 @@ mod tests {
                     right: 0,
                     strict_pillarboxing: false,
                 },
-                W360P.as_vec2().into(),
+                W360P.into(),
             );
             app.update();
             let viewport = app
@@ -1140,7 +1146,7 @@ mod tests {
                     right: 5,
                     strict_pillarboxing: false,
                 },
-                W360P.as_vec2().into(),
+                W360P.into(),
             );
             app.update();
             let viewport = app
@@ -1159,7 +1165,7 @@ mod tests {
                     right: 10,
                     strict_pillarboxing: false,
                 },
-                W360P.as_vec2().into(),
+                W360P.into(),
             );
             app.update();
             let viewport = app
@@ -1178,7 +1184,7 @@ mod tests {
                     right: 5,
                     strict_pillarboxing: false,
                 },
-                W360P.as_vec2().into(),
+                W360P.into(),
             );
             app.update();
             let viewport = app
@@ -1197,7 +1203,7 @@ mod tests {
                     right: 0,
                     strict_pillarboxing: false,
                 },
-                W360P.as_vec2().into(),
+                W360P.into(),
             );
             app.update();
             let viewport = app
@@ -1216,7 +1222,7 @@ mod tests {
                     right: 2,
                     strict_pillarboxing: true,
                 },
-                W360P.as_vec2().into(),
+                W360P.into(),
             );
             app.update();
             let viewport = app
@@ -1235,7 +1241,7 @@ mod tests {
                     right: 0,
                     strict_pillarboxing: true,
                 },
-                W360P.as_vec2().into(),
+                W360P.into(),
             );
             app.update();
             let viewport = app
@@ -1254,7 +1260,7 @@ mod tests {
                     right: 5,
                     strict_pillarboxing: true,
                 },
-                W360P.as_vec2().into(),
+                W360P.into(),
             );
             app.update();
             let viewport = app
@@ -1273,7 +1279,7 @@ mod tests {
                     right: 10,
                     strict_pillarboxing: true,
                 },
-                W360P.as_vec2().into(),
+                W360P.into(),
             );
             app.update();
             let viewport = app
@@ -1292,7 +1298,7 @@ mod tests {
                     right: 5,
                     strict_pillarboxing: true,
                 },
-                W360P.as_vec2().into(),
+                W360P.into(),
             );
             app.update();
             let viewport = app
@@ -1311,7 +1317,7 @@ mod tests {
                     right: 0,
                     strict_pillarboxing: true,
                 },
-                W360P.as_vec2().into(),
+                W360P.into(),
             );
             app.update();
             let viewport = app
@@ -1331,7 +1337,7 @@ mod tests {
                     bottom: 2,
                     strict_letterboxing: true,
                 },
-                W360P.as_vec2().into(),
+                W360P.into(),
             );
             app.update();
             let viewport = app
@@ -1350,7 +1356,7 @@ mod tests {
                     bottom: 0,
                     strict_letterboxing: true,
                 },
-                W360P.as_vec2().into(),
+                W360P.into(),
             );
             app.update();
             let viewport = app
@@ -1369,7 +1375,7 @@ mod tests {
                     bottom: 5,
                     strict_letterboxing: true,
                 },
-                W360P.as_vec2().into(),
+                W360P.into(),
             );
             app.update();
             let viewport = app
@@ -1388,7 +1394,7 @@ mod tests {
                     bottom: 5,
                     strict_letterboxing: true,
                 },
-                W360P.as_vec2().into(),
+                W360P.into(),
             );
             app.update();
             let viewport = app
@@ -1407,7 +1413,7 @@ mod tests {
                     bottom: 10,
                     strict_letterboxing: true,
                 },
-                W360P.as_vec2().into(),
+                W360P.into(),
             );
             app.update();
             let viewport = app
@@ -1426,7 +1432,7 @@ mod tests {
                     bottom: 0,
                     strict_letterboxing: true,
                 },
-                W360P.as_vec2().into(),
+                W360P.into(),
             );
             app.update();
             let viewport = app
@@ -1443,7 +1449,7 @@ mod tests {
                     bottom: 2,
                     strict_letterboxing: false,
                 },
-                W360P.as_vec2().into(),
+                W360P.into(),
             );
             app.update();
             let viewport = app
@@ -1462,7 +1468,7 @@ mod tests {
                     bottom: 0,
                     strict_letterboxing: false,
                 },
-                W360P.as_vec2().into(),
+                W360P.into(),
             );
             app.update();
             let viewport = app
@@ -1481,7 +1487,7 @@ mod tests {
                     bottom: 5,
                     strict_letterboxing: false,
                 },
-                W360P.as_vec2().into(),
+                W360P.into(),
             );
             app.update();
             let viewport = app
@@ -1500,7 +1506,7 @@ mod tests {
                     bottom: 5,
                     strict_letterboxing: false,
                 },
-                W360P.as_vec2().into(),
+                W360P.into(),
             );
             app.update();
             let viewport = app
@@ -1519,7 +1525,7 @@ mod tests {
                     bottom: 10,
                     strict_letterboxing: false,
                 },
-                W360P.as_vec2().into(),
+                W360P.into(),
             );
             app.update();
             let viewport = app
@@ -1538,7 +1544,7 @@ mod tests {
                     bottom: 0,
                     strict_letterboxing: false,
                 },
-                W360P.as_vec2().into(),
+                W360P.into(),
             );
             app.update();
             let viewport = app
@@ -1559,7 +1565,7 @@ mod tests {
                     resolution: W360P.into(),
                     position: None,
                 },
-                W360P.as_vec2().into(),
+                W360P.into(),
             );
             app.update();
             let viewport = app
@@ -1575,7 +1581,7 @@ mod tests {
                     resolution: W360P.into(),
                     position: Some((1, 0).into()),
                 },
-                W360P.as_vec2().into(),
+                W360P.into(),
             );
             app.update();
             let viewport = app
@@ -1591,7 +1597,7 @@ mod tests {
                     resolution: W360P.into(),
                     position: None,
                 },
-                W720P.as_vec2().into(),
+                W720P.into(),
             );
             app.update();
             let viewport = app
@@ -1609,7 +1615,7 @@ mod tests {
                     resolution: W360P.into(),
                     position: None,
                 },
-                W180P.as_vec2().into(),
+                W180P.into(),
             );
             app.update();
             let viewport = app
@@ -1631,7 +1637,7 @@ mod tests {
                     aspect_ratio: desired_aspect_ratio,
                     position: None,
                 },
-                W360P.as_vec2().into(),
+                W360P.into(),
             );
             app.update();
             let viewport = app
@@ -1648,7 +1654,7 @@ mod tests {
                     aspect_ratio: desired_aspect_ratio,
                     position: None,
                 },
-                W720P.as_vec2().into(),
+                W720P.into(),
             );
             app.update();
             let viewport = app
@@ -1667,7 +1673,7 @@ mod tests {
                     aspect_ratio: desired_aspect_ratio,
                     position: Some((1, 0).into()),
                 },
-                W360P.as_vec2().into(),
+                W360P.into(),
             );
             app.update();
             let viewport = app
@@ -1688,7 +1694,7 @@ mod tests {
                     resolution: W360P.as_vec2().into(),
                     allow_imperfect_downscaled_boxing: true,
                 },
-                W360P.as_vec2().into(),
+                W360P.into(),
             );
             app.update();
             let viewport = app
@@ -1704,7 +1710,7 @@ mod tests {
                     resolution: (640., 480.).into(),
                     allow_imperfect_downscaled_boxing: true,
                 },
-                W720P.as_vec2().into(),
+                W720P.into(),
             );
             app.update();
             let viewport = app
@@ -1722,7 +1728,7 @@ mod tests {
                     resolution: W360P.as_vec2(),
                     allow_imperfect_downscaled_boxing: true,
                 },
-                W720P.as_vec2().into(),
+                W720P.into(),
             );
             app.update();
             let viewport = app
@@ -1738,7 +1744,7 @@ mod tests {
                     resolution: W360P.as_vec2().into(),
                     allow_imperfect_downscaled_boxing: true,
                 },
-                W180P.as_vec2().into(),
+                W180P.into(),
             );
             app.update();
             let viewport = app
@@ -1754,7 +1760,7 @@ mod tests {
                     resolution: W360P.as_vec2().into(),
                     allow_imperfect_downscaled_boxing: true,
                 },
-                (W180P + 10).as_vec2().into(),
+                (W180P + 10).into(),
             );
             app.update();
             let viewport = app
@@ -1775,7 +1781,7 @@ mod tests {
                     resolution: W360P.as_vec2().into(),
                     allow_imperfect_downscaled_boxing: false,
                 },
-                W360P.as_vec2().into(),
+                W360P.into(),
             );
             app.update();
             let viewport = app
@@ -1791,7 +1797,7 @@ mod tests {
                     resolution: (640., 480.).into(),
                     allow_imperfect_downscaled_boxing: false,
                 },
-                W720P.as_vec2().into(),
+                W720P.into(),
             );
             app.update();
             let viewport = app
@@ -1809,7 +1815,7 @@ mod tests {
                     resolution: W360P.as_vec2(),
                     allow_imperfect_downscaled_boxing: false,
                 },
-                W720P.as_vec2().into(),
+                W720P.into(),
             );
             app.update();
             let viewport = app
@@ -1825,7 +1831,7 @@ mod tests {
                     resolution: W360P.as_vec2().into(),
                     allow_imperfect_downscaled_boxing: false,
                 },
-                W180P.as_vec2().into(),
+                W180P.into(),
             );
             app.update();
             let viewport = app
@@ -1841,7 +1847,7 @@ mod tests {
                     resolution: W360P.as_vec2().into(),
                     allow_imperfect_downscaled_boxing: false,
                 },
-                (W180P + 10).as_vec2().into(),
+                (W180P + 10).into(),
             );
             app.update();
             let viewport = app
@@ -1863,7 +1869,7 @@ mod tests {
             app.init_resource::<Assets<Image>>();
             app.world_mut().spawn((
                 Window {
-                    resolution: W360P.as_vec2().into(),
+                    resolution: W360P.into(),
                     ..Window::default()
                 },
                 PrimaryWindow,
@@ -1887,7 +1893,7 @@ mod tests {
                 First,
                 camerabox_changed.run_if(any_with_component::<CameraBox>),
             );
-            app.add_event::<AdjustBoxing>();
+            app.add_message::<AdjustBoxing>();
             app.update();
             let mut camera_box = app.world_mut().get_mut::<CameraBox>(camera_id).unwrap();
             *camera_box = CameraBox::LetterBox {
@@ -1896,7 +1902,7 @@ mod tests {
                 strict_letterboxing: true,
             };
             app.update();
-            let adjust_boxing_events = app.world().resource::<Events<AdjustBoxing>>();
+            let adjust_boxing_events = app.world().resource::<Messages<AdjustBoxing>>();
             let mut adjust_boxing_reader = adjust_boxing_events.get_cursor();
             let boxing_adjust = adjust_boxing_reader.read(adjust_boxing_events).next();
 
@@ -1913,7 +1919,7 @@ mod tests {
                 .world_mut()
                 .spawn((
                     Window {
-                        resolution: W360P.as_vec2().into(),
+                        resolution: W360P.into(),
                         ..Window::default()
                     },
                     PrimaryWindow,
@@ -1927,12 +1933,12 @@ mod tests {
                 First,
                 windows_changed.run_if(any_with_component::<CameraBox>),
             );
-            app.add_event::<AdjustBoxing>();
+            app.add_message::<AdjustBoxing>();
             app.update();
             let mut window = app.world_mut().get_mut::<Window>(window_id).unwrap();
-            window.resolution = W720P.as_vec2().into();
+            window.resolution = W720P.into();
             app.update();
-            let adjust_boxing_events = app.world().resource::<Events<AdjustBoxing>>();
+            let adjust_boxing_events = app.world().resource::<Messages<AdjustBoxing>>();
             let mut adjust_boxing_reader = adjust_boxing_events.get_cursor();
             let boxing_adjust = adjust_boxing_reader.read(adjust_boxing_events).next();
 
@@ -1945,12 +1951,12 @@ mod tests {
 
             app.init_resource::<ManualTextureViews>();
             app.init_resource::<Assets<Image>>();
-            app.add_event::<AssetEvent<Image>>();
-            app.add_event::<AdjustBoxing>();
+            app.add_message::<AssetEvent<Image>>();
+            app.add_message::<AdjustBoxing>();
             app.add_systems(
                 First,
                 images_changed.run_if(any_with_component::<CameraBox>.and(
-                    resource_changed_or_removed::<Assets<Image>>.or(on_event::<AssetEvent<Image>>),
+                    resource_changed_or_removed::<Assets<Image>>.or(on_message::<AssetEvent<Image>>),
                 )),
             );
             app.update();
@@ -1958,7 +1964,7 @@ mod tests {
             let mut images = app.world_mut().resource_mut::<Assets<Image>>();
             images.add(Image::default());
             app.update();
-            let adjust_boxing_events = app.world().resource::<Events<AdjustBoxing>>();
+            let adjust_boxing_events = app.world().resource::<Messages<AdjustBoxing>>();
             let mut adjust_boxing_reader = adjust_boxing_events.get_cursor();
             let boxing_adjust = adjust_boxing_reader.read(adjust_boxing_events).next();
             assert!(boxing_adjust.is_none());
@@ -1966,9 +1972,9 @@ mod tests {
             let event = AssetEvent::Modified {
                 id: AssetId::default(),
             };
-            app.world_mut().send_event::<AssetEvent<Image>>(event);
+            app.world_mut().write_message::<AssetEvent<Image>>(event);
             app.update();
-            let adjust_boxing_events = app.world().resource::<Events<AdjustBoxing>>();
+            let adjust_boxing_events = app.world().resource::<Messages<AdjustBoxing>>();
             let mut adjust_boxing_reader = adjust_boxing_events.get_cursor();
             let boxing_adjust = adjust_boxing_reader.read(adjust_boxing_events).next();
             assert!(boxing_adjust.is_none());
@@ -1983,7 +1989,7 @@ mod tests {
             let mut images = app.world_mut().resource_mut::<Assets<Image>>();
             images.add(Image::default());
             app.update();
-            let adjust_boxing_events = app.world().resource::<Events<AdjustBoxing>>();
+            let adjust_boxing_events = app.world().resource::<Messages<AdjustBoxing>>();
             let mut adjust_boxing_reader = adjust_boxing_events.get_cursor();
             let boxing_adjust = adjust_boxing_reader.read(adjust_boxing_events).next();
             assert!(boxing_adjust.is_some());
@@ -1991,15 +1997,15 @@ mod tests {
             let event = AssetEvent::Modified {
                 id: AssetId::default(),
             };
-            app.world_mut().send_event::<AssetEvent<Image>>(event);
+            app.world_mut().write_message::<AssetEvent<Image>>(event);
             app.update();
-            let adjust_boxing_events = app.world().resource::<Events<AdjustBoxing>>();
+            let adjust_boxing_events = app.world().resource::<Messages<AdjustBoxing>>();
             let mut adjust_boxing_reader = adjust_boxing_events.get_cursor();
             let boxing_adjust = adjust_boxing_reader.read(adjust_boxing_events).next();
             assert!(boxing_adjust.is_some());
             app.update();
 
-            let adjust_boxing_events = app.world().resource::<Events<AdjustBoxing>>();
+            let adjust_boxing_events = app.world().resource::<Messages<AdjustBoxing>>();
             let mut adjust_boxing_reader = adjust_boxing_events.get_cursor();
             let boxing_adjust = adjust_boxing_reader.read(adjust_boxing_events).next();
             assert!(boxing_adjust.is_none());
@@ -2011,7 +2017,7 @@ mod tests {
 
             app.init_resource::<ManualTextureViews>();
             app.init_resource::<Assets<Image>>();
-            app.add_event::<AdjustBoxing>();
+            app.add_message::<AdjustBoxing>();
             app.update();
             app.add_systems(
                 First,
@@ -2026,7 +2032,7 @@ mod tests {
             // any mutable access might've changed something, it seems.
             let _ = app.world_mut().resource_mut::<ManualTextureViews>();
             app.update();
-            let adjust_boxing_events = app.world().resource::<Events<AdjustBoxing>>();
+            let adjust_boxing_events = app.world().resource::<Messages<AdjustBoxing>>();
             let mut adjust_boxing_reader = adjust_boxing_events.get_cursor();
             let boxing_adjust = adjust_boxing_reader.read(adjust_boxing_events).next();
             assert!(boxing_adjust.is_none());
@@ -2039,7 +2045,7 @@ mod tests {
 
             let _ = app.world_mut().resource_mut::<ManualTextureViews>();
             app.update();
-            let adjust_boxing_events = app.world().resource::<Events<AdjustBoxing>>();
+            let adjust_boxing_events = app.world().resource::<Messages<AdjustBoxing>>();
             let mut adjust_boxing_reader = adjust_boxing_events.get_cursor();
             let boxing_adjust = adjust_boxing_reader.read(adjust_boxing_events).next();
             assert!(boxing_adjust.is_some());
