@@ -5,7 +5,7 @@
 //! It provides ways to set a singular static resolution or aspect ratio, to always ensure the output
 //! is at a resolution that is an integer scale, or provide manually specified letter/pillarboxing.
 //!
-//! This crate requires bevy version `0.17.0-rc.1`
+//! This crate requires bevy version `0.17`
 //!
 //! ## Features
 //! - Provides an easy, but powerful, API for camera boxing!

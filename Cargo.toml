@@ -1,6 +1,6 @@
 [package]
 name = "bevy_simple_screen_boxing"
-version = "0.2.0-rc.2"
+version = "0.2.0"
 edition = "2024"
 categories = ["game-development"]
 keywords = ["bevy", "letterbox", "camera"]
@@ -10,13 +10,13 @@ repository = "https://github.com/Sapein/bevy_simple_screen_boxing"
 readme = "README.md"
 
 [dependencies]
-bevy_app = { version = "0.17.0-rc.1", default-features = false }
-bevy_camera = { version = "0.17.0-rc.1", default-features = false }
-bevy_asset = { version = "0.17.0-rc.1", default-features = false }
-bevy_math = { version = "0.17.0-rc.1" , default-features = false, features = ["libm", "bevy_reflect"]}
-bevy_reflect = { version = "0.17.0-rc.1", default-features = false }
-bevy_ecs = { version = "0.17.0-rc.1", default-features = false }
-bevy_image = { version = "0.17.0-rc.1", default-features = false }
-bevy_render = { version = "0.17.0-rc.1", default-features = false }
-bevy_window = { version = "0.17.0-rc.1", default-features = false }
-bevy_log = { version = "0.17.0-rc.1", default-features = false }
+bevy_app = { version = "0.17", default-features = false }
+bevy_camera = { version = "0.17", default-features = false }
+bevy_asset = { version = "0.17", default-features = false }
+bevy_math = { version = "0.17" , default-features = false, features = ["libm", "bevy_reflect"]}
+bevy_reflect = { version = "0.17", default-features = false }
+bevy_ecs = { version = "0.17", default-features = false }
+bevy_image = { version = "0.17", default-features = false }
+bevy_render = { version = "0.17", default-features = false }
+bevy_window = { version = "0.17", default-features = false }
+bevy_log = { version = "0.17", default-features = false }
