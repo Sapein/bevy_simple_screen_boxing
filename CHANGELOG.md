@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-03-06
+- Update to Bevy 0.18
+
 ## [0.2.1] - 2025-12-07  
 - Implement CameraBox Nesting.
 - Add in `Nesting` relationships between CameraBox components to allow for composition.

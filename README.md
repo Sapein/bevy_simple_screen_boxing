@@ -57,6 +57,7 @@ fn setup(mut commands: Command) {
 
 ## Known Limitations
 - If you use multiple cameras, only one clear color can be displayed at once, even if they have different viewports.
+- UI may not be scaled correctly, you may need to adjust it yourself.
 
 ## Supported Bevy Versions
 | Bevy Simple Screen Boxing Version | Bevy Version |
@@ -64,6 +65,7 @@ fn setup(mut commands: Command) {
 |                0.1                |     0.16     |
 |            0.2.0-rc.2             | 0.17.0-rc.1  |
 |                0.2                |     0.17     |
+|                0.3                |     0.18     |
 
 ## Acknowledgements  
 I just want to thank the people who gave feedback on the initial Issue/PR even if it didn't make it in. That feedback

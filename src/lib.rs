@@ -5,7 +5,7 @@
 //! It provides ways to set a singular static resolution or aspect ratio, to always ensure the output
 //! is at a resolution that is an integer scale, or provide manually specified letter/pillarboxing.
 //!
-//! This crate requires bevy version `0.17`
+//! This crate requires bevy version `0.18`
 //!
 //! ## Features
 //! - Provides an easy, but powerful, API for camera boxing!
@@ -23,7 +23,7 @@ use bevy_math::{AspectRatio, UVec2, Vec2};
 use bevy_reflect::Reflect;
 use bevy_render::texture::ManualTextureViews;
 use bevy_camera::prelude::*;
-use bevy_camera::Viewport;
+use bevy_camera::{RenderTarget, Viewport};
 use bevy_render::camera::NormalizedRenderTargetExt;
 use bevy_window::{PrimaryWindow, Window};
 
@@ -218,7 +218,7 @@ enum ViewportChanges {
 }
 
 fn adjust_viewport(
-    mut boxed_cameras: Query<(&mut Camera, &CameraBox, Option<&HasNested>)>,
+    mut boxed_cameras: Query<(&mut Camera, &mut RenderTarget, &CameraBox, Option<&HasNested>)>,
     loose_boxes: Query<(&CameraBox, Option<&HasNested>), Without<Camera>>,
     primary_window: Option<Single<Entity, With<PrimaryWindow>>>,
     windows: Query<(Entity, &Window)>,
@@ -226,12 +226,12 @@ fn adjust_viewport(
     images: Res<Assets<Image>>,
 ) {
     let primary_window = primary_window.map(|e| e.into_inner());
-    for (mut camera, camera_box, nested_box) in boxed_cameras.iter_mut() {
+    for (mut camera, target, camera_box, nested_box) in boxed_cameras.iter_mut() {
         if !camera.is_active {
             continue;
         }
 
-        let target = camera.target.normalize(primary_window);
+        let target = target.normalize(primary_window);
         let target = match target
             .and_then(|t| Some(t.get_render_target_info(windows, &images, &texture_views)))
         {
@@ -2485,9 +2485,9 @@ mod tests {
                     Camera {
                         viewport: None,
                         is_active: true,
-                        target: RenderTarget::Window(WindowRef::Primary),
                         ..Camera::default()
                     },
+                    RenderTarget::Window(WindowRef::Primary),
                     camerabox,
                 ))
                 .id();
@@ -3360,9 +3360,9 @@ mod tests {
                     Camera {
                         viewport: None,
                         is_active: true,
-                        target: RenderTarget::Window(WindowRef::Primary),
                         ..Camera::default()
                     },
+                    RenderTarget::Window(WindowRef::Primary),
                     CameraBox::StaticResolution {
                         resolution: W360P,
                         position: None,
@@ -3549,9 +3549,9 @@ mod tests {
                     Camera {
                         viewport: None,
                         is_active: true,
-                        target: RenderTarget::Window(WindowRef::Primary),
                         ..Camera::default()
                     },
+                    RenderTarget::Window(WindowRef::Primary),
                     CameraBox::StaticResolution {
                         resolution: W360P,
                         position: None,
@@ -3648,9 +3648,9 @@ mod tests {
                     Camera {
                         viewport: None,
                         is_active: true,
-                        target: RenderTarget::Window(WindowRef::Primary),
                         ..Camera::default()
                     },
+                    RenderTarget::Window(WindowRef::Primary),
                     CameraBox::StaticResolution {
                         resolution: W180P,
                         position: None,
@@ -3696,9 +3696,9 @@ mod tests {
                     Camera {
                         viewport: None,
                         is_active: true,
-                        target: RenderTarget::Window(WindowRef::Primary),
                         ..Camera::default()
                     },
+                    RenderTarget::Window(WindowRef::Primary),
                     CameraBox::StaticResolution {
                         resolution: W360P,
                         position: None,
@@ -3744,9 +3744,9 @@ mod tests {
                     Camera {
                         viewport: None,
                         is_active: true,
-                        target: RenderTarget::Window(WindowRef::Primary),
                         ..Camera::default()
                     },
+                    RenderTarget::Window(WindowRef::Primary),
                     CameraBox::StaticResolution {
                         resolution: W360P,
                         position: None,
