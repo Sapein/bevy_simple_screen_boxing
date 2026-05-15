@@ -5,7 +5,7 @@
 //! It provides ways to set a singular static resolution or aspect ratio, to always ensure the output
 //! is at a resolution that is an integer scale, or provide manually specified letter/pillarboxing.
 //!
-//! This crate requires bevy version `0.18`
+//! This crate requires bevy version `0.19.0-rc.1`
 //!
 //! ## Features
 //! - Provides an easy, but powerful, API for camera boxing!
@@ -79,7 +79,7 @@ impl Plugin for CameraBoxingPlugin {
                 First,
                 images_changed.in_set(CameraBoxSet::DetectChanges).run_if(
                     on_message::<AssetEvent<Image>>
-                        .or(resource_changed_or_removed::<Assets<Image>>),
+                        .or_else(resource_changed_or_removed::<Assets<Image>>),
                 ),
             )
             .add_systems(
@@ -2052,9 +2052,9 @@ mod tests {
             app.add_systems(
                 First,
                 images_changed.run_if(
-                    any_with_component::<CameraBox>.and(
+                    any_with_component::<CameraBox>.and_then(
                         resource_changed_or_removed::<Assets<Image>>
-                            .or(on_message::<AssetEvent<Image>>),
+                            .or_else(on_message::<AssetEvent<Image>>),
                     ),
                 ),
             );
@@ -2122,7 +2122,7 @@ mod tests {
                 First,
                 texture_views_changed.run_if(
                     any_with_component::<CameraBox>
-                        .and(resource_changed_or_removed::<ManualTextureViews>),
+                        .and_then(resource_changed_or_removed::<ManualTextureViews>),
                 ),
             );
 

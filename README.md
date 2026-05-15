@@ -66,6 +66,7 @@ fn setup(mut commands: Command) {
 |            0.2.0-rc.2             | 0.17.0-rc.1  |
 |                0.2                |     0.17     |
 |                0.3                |     0.18     |
+|             0.4-rc.1              |  0.19-rc.1   |
 
 ## Acknowledgements  
 I just want to thank the people who gave feedback on the initial Issue/PR even if it didn't make it in. That feedback
